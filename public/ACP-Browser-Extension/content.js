@@ -7,9 +7,19 @@
     try { return new URL(location.href).searchParams.get(name) || ""; } catch (e) { return ""; }
   }
 
+  // BannGrund aus dem roten Adminpanel-Bereich (nur feste Liste, nie beliebiger Text)
+  const REASONS = ["PC-Check Verweigerung - Trolling", "PC-Check Verweigerung", "PC-Check Positiv 4.1 (Discord)", "PC-Check Positiv 4.1 (Redux)",
+    "PC-Check Positiv - Cleaning", "PC Check Positiv (Banevading)", "PC Check Positiv (Covering Cheater)", "PC-Check Positiv",
+    "Event 1.7 (NoPov in PC Check)", "Acc 1.4 (Twink)", "Acc 1.4 (Main)", "Cheater"];
+  function findReason() {
+    const body = (document.body ? document.body.innerText : "").toLowerCase();
+    for (const r of REASONS) if (body.indexOf(r.toLowerCase()) !== -1) return r;
+    return "";
+  }
+
   function findSC() {
     const body = document.body ? document.body.innerText : "";
-    let m = body.match(/\b([a-f0-9]{32,40})\b/i);
+    let m = body.match(/\b([a-f0-9]{40})\b/i) || body.match(/\b([a-f0-9]{32})\b/i);
     if (m) return m[1];
     m = body.match(/Social\s*Club\s*[:#]?\s*([A-Za-z0-9_.-]{3,40})/i);
     if (m) return m[1];
@@ -33,11 +43,12 @@
   async function scanSC() {
     const id = param("dc_id");
     if (!id) return;
-    for (let i = 0; i < 20; i++) {
+    // SC bis zu 30 Sekunden abwarten; BannGrund frühestens nach 2,5 s Ladezeit auslesen
+    for (let i = 0; i < 30; i++) {
       const sc = findSC();
-      if (sc && window.__DC_SEND && window.__DC_SEND({ type: "SC_RESULT", targetId: id, sc: sc })) {
-        badge("SC übernommen ✓");
-        return;
+      if (sc && window.__DC_SEND) {
+        if (i < 3) await sleep(2500 - i * 1000);
+        if (window.__DC_SEND({ type: "SC_RESULT", targetId: id, sc: sc, reason: findReason() })) { badge("SC übernommen ✓"); return; }
       }
       await sleep(1000);
     }

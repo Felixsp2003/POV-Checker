@@ -1,89 +1,97 @@
-import React from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 
-interface State {
-  error: Error | null;
-  info: string;
-}
+interface State { error: Error | null; info: string; }
 
-/**
- * Fängt React-Abstürze ab und zeigt sie an, statt eine schwarze Seite zu lassen.
- * Die Daten im Browser bleiben dabei unangetastet.
- */
-export default class ErrorBoundary extends React.Component<{ children: React.ReactNode }, State> {
+// Fängt Render-Abstürze ab: statt eines schwarzen Bildschirms erscheint eine Fehlerseite
+// mit Diagnose und Rettungsfunktionen. Es werden NIEMALS Daten gelöscht.
+export default class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { error: null, info: "" };
 
-  static getDerivedStateFromError(error: Error): Partial<State> {
-    return { error };
+  static getDerivedStateFromError(error: Error): Partial<State> { return { error }; }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    this.setState({ info: info.componentStack || "" });
+    try { console.error("[DC Checker] Render-Fehler:", error, info.componentStack); } catch { /* noop */ }
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
+  private diagnostics(): string {
+    const lines: string[] = [];
     try {
-      const stack = info.componentStack || "";
-      this.setState({ info: stack.slice(0, 2500) });
-      // Auch global sichtbar machen (DevTools-frei lesbar)
-      const el = document.getElementById("dc-global-error");
-      if (el) {
-        el.style.display = "flex";
-        el.textContent = `FEHLER: ${error.message}`;
+      lines.push(`URL: ${location.href}`);
+      lines.push(`Browser: ${navigator.userAgent}`);
+      lines.push(`Fehler: ${this.state.error?.message || "?"}`);
+      lines.push("");
+      lines.push("localStorage (grandrp*):");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i) || "";
+        if (!k.startsWith("grandrp")) continue;
+        const v = localStorage.getItem(k) || "";
+        let shape = "string";
+        try {
+          const j = JSON.parse(v);
+          if (Array.isArray(j)) {
+            shape = `array[${j.length}]`;
+            const first = j.find((x: unknown) => x && typeof x === "object");
+            if (first) shape += ` keys: ${Object.keys(first as object).slice(0, 25).join(",")}`;
+          } else if (j && typeof j === "object") shape = `object keys: ${Object.keys(j).slice(0, 25).join(",")}`;
+          else shape = typeof j;
+        } catch { /* string */ }
+        lines.push(`  ${k} · ${(v.length / 1024).toFixed(1)} KB · ${shape}`);
       }
-    } catch { /* noop */ }
+    } catch (e) { lines.push(`Diagnose-Fehler: ${e instanceof Error ? e.message : String(e)}`); }
+    lines.push("");
+    lines.push("Stack:");
+    lines.push(this.state.error?.stack || "");
+    lines.push(this.state.info);
+    return lines.join("\n");
   }
 
-  render() {
+  private downloadRaw(): void {
+    const dump: Record<string, string> = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i) || "";
+      if (k.startsWith("grandrp")) dump[k] = localStorage.getItem(k) || "";
+    }
+    const blob = new Blob([JSON.stringify(dump)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `grandrp-rohdaten-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  private resetSession(): void {
+    // nur Sitzung/Tresor-Schlüssel — keine Archivdaten
+    for (const k of ["grandrp_session_v42", "grandrp_session_v42__dc"]) { try { localStorage.removeItem(k); } catch { /* noop */ } }
+    try { sessionStorage.clear(); } catch { /* noop */ }
+    location.reload();
+  }
+
+  render(): ReactNode {
     if (!this.state.error) return this.props.children;
-    const e = this.state.error;
+    const diag = this.diagnostics();
     return (
-      <div className="flex min-h-full items-center justify-center bg-[#070b14] p-6">
-        <div className="w-full max-w-2xl rounded-2xl border border-red-500/30 bg-[#0d1424] p-6 shadow-2xl">
-          <div className="mb-4 flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500 text-white">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 7v6M12 16.5v.5" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-lg font-black text-slate-100">Ein Fehler hat die Ansicht unterbrochen</h1>
-              <p className="text-xs text-slate-400">Deine gespeicherten Daten sind nicht betroffen — sie liegen im Browser und bleiben erhalten.</p>
-            </div>
+      <div style={{ minHeight: "100%", background: "#070b14", color: "#e6ecf7", fontFamily: "system-ui, sans-serif", padding: 24 }}>
+        <div style={{ maxWidth: 900, margin: "0 auto", border: "1px solid #7f1d1d", background: "#160b10", borderRadius: 16, padding: 24 }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>⚠️ Anzeige-Fehler abgefangen</h1>
+          <p style={{ color: "#fca5a5", marginTop: 8, fontSize: 14 }}>{this.state.error.message}</p>
+          <p style={{ color: "#93a0b8", fontSize: 13, lineHeight: 1.6 }}>
+            Deine Daten sind <b>nicht</b> verändert worden. Wahrscheinlich liegen im Browser Daten einer anderen App-Version
+            (gleiche Domain = gleicher Speicher). Bitte „Diagnose kopieren“ und den Text schicken.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+            <button onClick={() => location.reload()} style={btn("#f59e0b", "#111")}>Neu laden</button>
+            <button onClick={() => this.resetSession()} style={btn("#1b2540", "#e6ecf7")}>Sitzung zurücksetzen & neu laden</button>
+            <button onClick={() => { void navigator.clipboard.writeText(diag).catch(() => undefined); }} style={btn("#1b2540", "#e6ecf7")}>Diagnose kopieren</button>
+            <button onClick={() => this.downloadRaw()} style={btn("#1b2540", "#e6ecf7")}>Rohdaten sichern (Download)</button>
           </div>
-
-          <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3">
-            <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-red-300">Fehlermeldung</p>
-            <p className="break-words font-mono text-xs text-red-200">{e.name}: {e.message}</p>
-          </div>
-
-          {this.state.info && (
-            <details className="mt-3 rounded-xl border border-white/10 bg-black/30 p-3">
-              <summary className="cursor-pointer text-xs font-bold text-slate-300">Technische Details anzeigen</summary>
-              <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-slate-400">{this.state.info}</pre>
-            </details>
-          )}
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-[#131006] hover:bg-amber-400"
-              onClick={() => this.setState({ error: null, info: "" })}
-            >
-              Versuchen fortzufahren
-            </button>
-            <button
-              className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-white/10"
-              onClick={() => window.location.reload()}
-            >
-              Seite neu laden
-            </button>
-            <a
-              href="https://github.com/Felixsp2003/POV-Checker/issues"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-white/10"
-            >
-              Fehler melden
-            </a>
-          </div>
+          <pre style={{ marginTop: 16, whiteSpace: "pre-wrap", fontSize: 11, color: "#94a3b8", background: "#0b1120", padding: 12, borderRadius: 10, maxHeight: 360, overflow: "auto" }}>{diag}</pre>
         </div>
       </div>
     );
   }
+}
+
+function btn(bg: string, fg: string): React.CSSProperties {
+  return { background: bg, color: fg, border: 0, borderRadius: 10, padding: "10px 14px", fontWeight: 800, cursor: "pointer", fontSize: 13 };
 }

@@ -3,8 +3,8 @@
 // AES-256-GCM · PBKDF2 (180k) · Schlüssel nur im RAM / sessionStorage
 // Cloud sieht ausschließlich Ciphertext. Ohne Login-Passwort unlesbar.
 // ============================================================
-import type { PovEntry } from "./core";
-import { loadDeleted, loadDrive, loadLastKnown, loadMeta, saveDrive } from "./core";
+import { loadDeleted, loadDrive, loadLastKnown, loadMeta, saveDrive, loadYT, loadSettings } from "./core";
+import { denormalizeEntry } from "./legacy";
 
 export const VAULT_LS = "grandrp_vault_enc_v42";
 export const VAULT_IDB = "__vault_enc__";
@@ -19,11 +19,20 @@ const ITER = 180_000;
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 
+// Backup-Format = Format der alten App ("grandrp-cloud-archive" v3) + Zusatzfelder.
+// Einträge liegen im alten Schema (unknown[]) — beide App-Versionen können die Datei lesen.
 export interface VaultPayload {
+  format?: string;
   version: number;
+  backupType?: string;
+  createdAt?: string;
+  reason?: string;
+  note?: string;
   at: number;
-  entries: PovEntry[];
+  entries: unknown[];
   deleted: string[];
+  youtubeConnections?: Array<{ slot: number; clientId: string; connected?: boolean }>;
+  settings?: Record<string, unknown>;
 }
 
 export interface Envelope {
@@ -131,12 +140,20 @@ export function isEnvelope(x: unknown): x is Envelope {
   return o.v === 1 && o.alg === "AES-GCM" && typeof o.ct === "string" && typeof o.iv === "string";
 }
 
-export function buildVaultPayload(): VaultPayload {
+export function buildVaultPayload(reason = "Archiv gespeichert"): VaultPayload {
+  const s = loadSettings();
   return {
-    version: 42,
+    format: "grandrp-cloud-archive",
+    version: 3,
+    backupType: "metadata-only",
+    createdAt: new Date().toISOString(),
+    reason,
+    note: "Archiv-Metadaten, Proof-/YouTube-Links und sichere App-Einstellungen. Keine POV-Videodateien und keine OAuth-Tokens.",
     at: Date.now(),
-    entries: loadMeta(),
+    entries: loadMeta().map(denormalizeEntry),
     deleted: loadDeleted(),
+    youtubeConnections: loadYT().map((y) => ({ slot: y.slot + 1, clientId: y.clientId, connected: !!y.accessToken && y.expiry > Date.now() })),
+    settings: { frames: s.ocrFrames, serverDefault: s.serverDefault },
   };
 }
 
@@ -299,7 +316,12 @@ async function driveFind(accessToken: string, name: string): Promise<string | nu
 
 export async function decodeCloudObject(obj: unknown): Promise<VaultPayload> {
   if (isEnvelope(obj)) return decryptEnvelope(obj);
-  if (obj && typeof obj === "object" && Array.isArray((obj as VaultPayload).entries)) return obj as VaultPayload;
+  // altes Klartext-Backup der alten App ("grandrp-cloud-archive") oder eigenes Format
+  if (obj && typeof obj === "object" && Array.isArray((obj as VaultPayload).entries)) {
+    const p = obj as VaultPayload;
+    return { ...p, deleted: Array.isArray(p.deleted) ? p.deleted : [], at: p.at || Date.parse(p.createdAt || "") || Date.now() };
+  }
+  if (Array.isArray(obj)) return { version: 3, at: Date.now(), entries: obj, deleted: [] };
   throw new Error("Unbekanntes Backup-Format.");
 }
 
@@ -357,7 +379,7 @@ export async function vaultBackup(reason: string): Promise<{ ok: boolean; msg: s
   }
 }
 
-export async function vaultRestore(): Promise<{ ok: boolean; msg: string; entries?: PovEntry[]; deleted?: string[] }> {
+export async function vaultRestore(): Promise<{ ok: boolean; msg: string; entries?: unknown[]; deleted?: string[]; youtubeConnections?: VaultPayload["youtubeConnections"] }> {
   if (!memKey) await restoreVaultKey();
   const cfg = loadDrive();
   const errors: string[] = [];
@@ -370,7 +392,7 @@ export async function vaultRestore(): Promise<{ ok: boolean; msg: string; entrie
         const obj = await driveGetJson(cfg.accessToken, id);
         const payload = await decodeCloudObject(obj);
         if (!cfg.fileId) saveDrive({ ...loadDrive(), fileId: id });
-        return { ok: true, msg: `Drive-Tresor: ${payload.entries.length} Einträge (AES-256).`, entries: payload.entries, deleted: payload.deleted };
+        return { ok: true, msg: `Drive-Tresor: ${payload.entries.length} Einträge (AES-256).`, entries: payload.entries, deleted: payload.deleted, youtubeConnections: payload.youtubeConnections };
       }
     } catch (e) { errors.push(`Drive: ${e instanceof Error ? e.message : String(e)}`); }
   }
@@ -381,7 +403,7 @@ export async function vaultRestore(): Promise<{ ok: boolean; msg: string; entrie
       const obj = await gistLoad(cfg.gistToken, cfg.gistId);
       if (obj) {
         const payload = await decodeCloudObject(obj);
-        return { ok: true, msg: `Gist-Tresor: ${payload.entries.length} Einträge (AES-256).`, entries: payload.entries, deleted: payload.deleted };
+        return { ok: true, msg: `Gist-Tresor: ${payload.entries.length} Einträge (AES-256).`, entries: payload.entries, deleted: payload.deleted, youtubeConnections: payload.youtubeConnections };
       }
     } catch (e) { errors.push(`Gist: ${e instanceof Error ? e.message : String(e)}`); }
   }

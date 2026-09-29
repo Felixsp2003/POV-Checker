@@ -4,8 +4,12 @@ import "./index.css";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
 
-// Der ErrorBoundary sorgt dafür, dass ein Absturz sichtbar angezeigt wird,
-// statt eine schwarze Seite zu hinterlassen. Die Daten bleiben erhalten.
+// Unbehandelte Promise-Fehler dürfen die Seite nicht lahmlegen — nur protokollieren.
+window.addEventListener("unhandledrejection", (ev) => {
+  try { console.error("[DC Checker] Unbehandelter Fehler:", ev.reason); } catch { /* noop */ }
+  ev.preventDefault();
+});
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary>

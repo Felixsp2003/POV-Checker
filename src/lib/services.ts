@@ -5,10 +5,10 @@
 // ============================================================
 import { createWorker, PSM } from "tesseract.js";
 import {
-  ACP_BASE, ALLOWED_REASONS, PovEntry, SERVERS, buildFinalFilename,
+  ACP_BASE, BAN_ADMIN_ID, PovEntry, buildFinalFilename, classifyReason, dateFromFilename,
   entryQuality, getMissing, loadBridgeToken, todayISO,
 } from "./core";
-import { vaultBackup, vaultRestore } from "./vault";
+import { vaultBackup, vaultRestore, type VaultPayload } from "./vault";
 
 // ---------------- Thumbnails ----------------
 
@@ -75,12 +75,12 @@ function preprocess(canvas: HTMLCanvasElement, mode: string): HTMLCanvasElement 
   return out;
 }
 
-function cropBottom(canvas: HTMLCanvasElement, frac = 0.55): HTMLCanvasElement {
+// Chat-Bereich oben links (dort steht der Bannblock „Adam Byers [15340] hat … [ID] für …“), 2× vergrößert
+function cropChat(canvas: HTMLCanvasElement, wFrac = 0.55, hFrac = 0.6): HTMLCanvasElement {
   const out = document.createElement("canvas");
-  out.width = canvas.width;
-  out.height = Math.round(canvas.height * frac);
-  out.getContext("2d")!.drawImage(canvas, 0, canvas.height - out.height, canvas.width, out.height, 0, 0, out.width, out.height);
-  // 2x upscale für OCR
+  out.width = Math.round(canvas.width * wFrac);
+  out.height = Math.round(canvas.height * hFrac);
+  out.getContext("2d")!.drawImage(canvas, 0, 0, out.width, out.height, 0, 0, out.width, out.height);
   const big = document.createElement("canvas");
   big.width = out.width * 2; big.height = out.height * 2;
   const bctx = big.getContext("2d")!;
@@ -89,79 +89,42 @@ function cropBottom(canvas: HTMLCanvasElement, frac = 0.55): HTMLCanvasElement {
   return big;
 }
 
-// ---------------- OCR Parsing ----------------
-
-const ID_PATTERNS = [
-  /(?:ID|Id|id)\s*[:#.]?\s*(\d{3,8})/g,
-  /\b(\d{4,7})\b/g,
-];
+// ---------------- OCR Parsing (Regeln der alten App) ----------------
+//  • Ziel-ID = 1..6 Ziffern NUR aus „hat … [ID] für/fur …“ (Bannblock), niemals Admin-ID / HUD-Zahlen
+//  • Grund nur aus der geschlossenen Liste (ALLOWED_REASONS + Aliase)
+//  • SC = 40-stelliger Hex-Wert (SocialClub) – sonst leer (kommt aus dem ACP)
+//  • Server aus „DE03“-Badge → "3"
 
 export function parseOcrText(text: string, adminId: string): Partial<PovEntry> {
-  const t = ` ${text} `;
+  const t = ` ${text.replace(/\s+/g, " ")} `;
   const out: Partial<PovEntry> = {};
-  // IDs (alle Kandidaten, Admin-ID ausschließen)
-  const candidates: string[] = [];
-  for (const rx of ID_PATTERNS) {
-    rx.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = rx.exec(t)) !== null) {
-      const id = m[1];
-      if (/^\d{3,8}$/.test(id) && id !== adminId && !candidates.includes(id)) candidates.push(id);
-    }
+  const banned = new Set([adminId, BAN_ADMIN_ID].filter(Boolean));
+  const idOk = (id: string) => /^\d{1,6}$/.test(id) && !banned.has(id) && !banned.has(id.replace(/^0+/, ""));
+
+  // 1) Bannblock: „hat <Name> [ID] für/fur <Grund>“
+  let m = t.match(/hat\s+[^\[\]]{0,60}?\[\s*(\d{1,6})\s*\]\s*f[üu]r/i);
+  if (m && idOk(m[1])) out.targetId = m[1];
+  // 2) Fallback: [ID] in eckigen Klammern (ohne Admin-ID)
+  if (!out.targetId) {
+    const rx = /\[\s*(\d{1,6})\s*\]/g; let mm: RegExpExecArray | null; const c: string[] = [];
+    while ((mm = rx.exec(t)) !== null) if (idOk(mm[1])) c.push(mm[1]);
+    if (c.length) out.targetId = c[c.length - 1]; // im Bannblock steht die Ziel-ID nach dem Admin
   }
-  // Häufigster Kandidat gewinnt (Voting)
-  if (candidates.length) {
-    const freq = new Map<string, number>();
-    for (const c of candidates) freq.set(c, (freq.get(c) || 0) + 1 + (t.split(c).length - 1) * 0.5);
-    out.targetId = [...freq.entries()].sort((a, b) => b[1] - a[1])[0][0];
-  }
-  // Grund (nur erlaubte Liste)
-  const low = t.toLowerCase();
-  let best = "";
-  for (const r of ALLOWED_REASONS) {
-    if (r.length < 3) continue;
-    if (low.includes(r.toLowerCase())) {
-      if (r.length > best.length) best = r;
-    }
-  }
-  // Fuzzy-Aliase
-  const alias: Record<string, string> = {
-    "cheat": "Cheating", "redux": "Redux", "clean": "Cleaning", "troll": "Trolling",
-    "banevad": "Banevading", "pc check": "PC-Check", "pc-check": "PC-Check",
-    "pccheck": "PC-Check", "verweigerung": "PC-Check Verweigerung", "crossban": "Crossban",
-    "socban": "Soc-Ban", "soc-ban": "Soc-Ban", "hardban": "Hardbann", "perma": "Perma-Ban",
-    "rdm": "RDM", "vdm": "VDM", "fail": "Fail-RP", "power": "Powergaming", "meta": "Metagaming",
-  };
-  if (!best) {
-    for (const [k, v] of Object.entries(alias)) {
-      if (low.includes(k)) { best = v; break; }
-    }
-  }
-  if (best) out.reason = best;
-  // Server
-  for (const s of SERVERS) {
-    if (t.toUpperCase().includes(s)) { out.server = s; break; }
-  }
-  if (!out.server) {
-    const m = t.match(/\b(DE|EN|JP|TR|US)\s*0?([1-5])\b/i);
-    if (m) out.server = `${m[1].toUpperCase()}0${m[2]}`;
-  }
-  // Datum
-  const dm = t.match(/(\d{1,2})[./](\d{1,2})[./](\d{2,4})/) || t.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (dm) {
-    if (dm[0].includes("-")) out.date = dm[0];
-    else {
-      const d = dm[1].padStart(2, "0"), mo = dm[2].padStart(2, "0");
-      let y = dm[3]; if (y.length === 2) y = "20" + y;
-      out.date = `${y}-${mo}-${d}`;
-    }
-  }
-  // SC / RID (32-hex oder SC:...)
-  const scm = t.match(/\b([a-f0-9]{32})\b/i) || t.match(/SC\s*[:#]?\s*([A-Za-z0-9]{6,40})/i) || t.match(/RID\s*[:#]?\s*([A-Za-z0-9]{6,40})/i);
-  if (scm) out.sc = scm[1];
-  // Discord
-  const dcm = t.match(/discord\s*[:#]?\s*([A-Za-z0-9_.]{2,32})/i) || t.match(/\b(\d{15,22})\b/);
-  if (dcm && dcm[1] !== out.targetId) out.discord = dcm[1];
+  // 3) Grund nur aus geschlossener Liste
+  const reason = classifyReason(t);
+  if (reason) out.reason = reason;
+  // 4) Server-Badge
+  m = t.match(/\bDE\s?0?([1-5])\b/i);
+  if (m) out.server = m[1];
+  // 5) Datum
+  const dm = t.match(/(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+  if (dm) out.date = `${dm[3]}-${dm[2].padStart(2, "0")}-${dm[1].padStart(2, "0")}`;
+  // 6) SocialClub-Hash (40 hex), Fallback 32 hex
+  m = t.match(/\b([a-f0-9]{40})\b/i) || t.match(/\b([a-f0-9]{32})\b/i);
+  if (m) out.sc = m[1].toLowerCase();
+  // 7) Discord-ID
+  m = t.match(/discord\s*[:#]?\s*(\d{15,22})/i) || t.match(/\b(\d{17,20})\b/);
+  if (m && m[1] !== out.targetId) out.discord = m[1];
   return out;
 }
 
@@ -184,87 +147,72 @@ function voteConsensus(variants: Partial<PovEntry>[]): Partial<PovEntry> {
   return out;
 }
 
-// Dateiname-Heuristik als zusätzliche OCR-Stimme (kostenlos & offline)
+// Dateiname: „2026-09-07 00-53-42.mp4“ → Datum · „172718, PC-Check Verweigerung, 07.09.2026.mp4“ → ID/Grund/Datum
 export function parseFileName(name: string, adminId: string): Partial<PovEntry> {
-  const base = name.replace(/\.[a-z0-9]+$/i, " ");
+  const base = name.replace(/\.[a-z0-9]+$/i, "");
   const out: Partial<PovEntry> = {};
-  const idm = base.match(/\b(\d{4,7})\b/);
-  if (idm && idm[1] !== adminId) out.targetId = idm[1];
-  const low = base.toLowerCase();
-  for (const r of ALLOWED_REASONS) {
-    if (low.includes(r.toLowerCase())) { out.reason = r; break; }
+  const d = dateFromFilename(base);
+  if (d) out.date = d;
+  const parts = base.split(",").map((s) => s.trim());
+  if (parts.length >= 2 && /^\d{1,8}$/.test(parts[0]) && parts[0] !== adminId && parts[0] !== BAN_ADMIN_ID) {
+    out.targetId = parts[0];
+    const r = classifyReason(parts[1]) || parts[1];
+    if (r) out.reason = r;
   }
-  for (const s of SERVERS) {
-    if (base.toUpperCase().includes(s)) { out.server = s; break; }
-  }
-  const dm = base.match(/(\d{4})-(\d{2})-(\d{2})/) || base.match(/(\d{1,2})[./](\d{1,2})[./](\d{2,4})/);
-  if (dm) {
-    if (dm[0].includes("-")) out.date = dm[0];
-    else {
-      let y = dm[3]; if (y.length === 2) y = "20" + y;
-      out.date = `${y}-${dm[2].padStart(2, "0")}-${dm[1].padStart(2, "0")}`;
-    }
-  }
+  const sm = base.match(/\bDE\s?0?([1-5])\b/i);
+  if (sm) out.server = sm[1];
   return out;
 }
 
 export interface OcrProgress { frame: number; frames: number; variant: string; text: string; }
+export interface OcrOutcome { data: Partial<PovEntry>; raw: string; votes: string[]; timestamps: Record<string, number>; }
 
 export async function runOcrOnFile(
   file: Blob, fileName: string, adminId: string,
   frameCount: number, lang: string,
   onProgress: (p: OcrProgress) => void,
-): Promise<{ data: Partial<PovEntry>; raw: string; votes: string[] }> {
+): Promise<OcrOutcome> {
   const votes: Partial<PovEntry>[] = [];
+  const perFrame: Array<{ t: number; v: Partial<PovEntry> }> = [];
   const rawTexts: string[] = [];
-  // Stimme 1: Dateiname
-  votes.push(parseFileName(fileName, adminId));
+  votes.push(parseFileName(fileName, adminId)); // Stimme 1: Dateiname (Datum!)
 
   const url = URL.createObjectURL(file);
   const video = document.createElement("video");
   video.muted = true; video.preload = "auto"; video.src = url;
-  await new Promise<void>((res) => {
-    video.onloadedmetadata = () => res();
-    video.onerror = () => res();
-    setTimeout(() => res(), 8000);
-  });
+  await new Promise<void>((res) => { video.onloadedmetadata = () => res(); video.onerror = () => res(); setTimeout(() => res(), 8000); });
   const dur = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 10;
-  const times: number[] = [];
-  for (let i = 0; i < Math.max(2, Math.min(10, frameCount)); i++) {
-    times.push(dur * (0.12 + (0.76 * i) / Math.max(1, Math.min(10, frameCount) - 1)));
-  }
+
+  // Priorität: letzte 5 Sekunden (Bannblock), danach grobe Abtastung
+  const n = Math.max(3, Math.min(12, frameCount || 8));
+  const late = [0.4, 1.3, 2.3, 3.4, 4.8].slice(0, Math.min(5, n - 1)).map((s) => Math.max(0.2, dur - s));
+  const coarseN = Math.max(1, n - late.length);
+  const coarse = Array.from({ length: coarseN }, (_, i) => dur * ((i + 1) / (coarseN + 1)));
+  const times = [...late, ...coarse];
 
   let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
-  try {
-    worker = await createWorker(lang || "deu+eng", undefined, {
-      // logger: () => undefined,
-    });
-  } catch {
-    worker = null;
-  }
+  try { worker = await createWorker(lang || "deu+eng"); } catch { worker = null; }
 
   const MODES: Array<{ mode: string; psm: PSM }> = [
-    { mode: "orig", psm: PSM.SPARSE_TEXT },
-    { mode: "gray", psm: PSM.AUTO },
     { mode: "contrast", psm: PSM.SPARSE_TEXT },
+    { mode: "gray", psm: PSM.AUTO },
     { mode: "thresh", psm: PSM.SINGLE_BLOCK },
+    { mode: "orig", psm: PSM.SPARSE_TEXT },
     { mode: "orange", psm: PSM.SPARSE_TEXT },
   ];
 
   if (worker && video.videoWidth > 0) {
     try {
-      const maxFrames = Math.min(times.length, 5);
-      for (let fi = 0; fi < maxFrames; fi++) {
+      for (let fi = 0; fi < times.length; fi++) {
         await new Promise<void>((res) => {
           const to = setTimeout(() => res(), 2500);
           video.onseeked = () => { clearTimeout(to); res(); };
           try { video.currentTime = times[fi]; } catch { clearTimeout(to); res(); }
         });
-        await new Promise((r) => setTimeout(r, 120));
+        await new Promise((r) => setTimeout(r, 100));
         let frame: HTMLCanvasElement;
-        try { frame = cropBottom(grabFrame(video)); } catch { continue; }
-        // pro Frame 2 Varianten (Performance) rotierend
-        const variants = [MODES[fi % MODES.length], MODES[(fi + 2) % MODES.length]];
+        try { frame = cropChat(grabFrame(video)); } catch { continue; }
+        const variants = fi < late.length ? [MODES[0], MODES[fi % 2 + 1]] : [MODES[fi % MODES.length]];
         for (const v of variants) {
           try {
             const pre = preprocess(frame, v.mode);
@@ -272,9 +220,10 @@ export async function runOcrOnFile(
             const { data } = await worker.recognize(pre);
             const text = (data.text || "").trim();
             if (text.length > 2) {
-              rawTexts.push(`[F${fi + 1}/${v.mode}] ${text.slice(0, 400)}`);
-              votes.push(parseOcrText(text, adminId));
-              onProgress({ frame: fi + 1, frames: maxFrames, variant: v.mode, text: text.slice(0, 220) });
+              const parsed = parseOcrText(text, adminId);
+              rawTexts.push(`[${times[fi].toFixed(1)}s/${v.mode}] ${text.slice(0, 400)}`);
+              votes.push(parsed); perFrame.push({ t: times[fi], v: parsed });
+              onProgress({ frame: fi + 1, frames: times.length, variant: v.mode, text: text.slice(0, 220) });
             }
           } catch { /* Variante überspringen */ }
         }
@@ -285,8 +234,18 @@ export async function runOcrOnFile(
   try { URL.revokeObjectURL(url); } catch { /* noop */ }
 
   const consensus = voteConsensus(votes);
-  if (!consensus.date) consensus.date = todayISO();
-  return { data: consensus, raw: rawTexts.join("\n"), votes: rawTexts };
+  if (!consensus.date) consensus.date = dateFromFilename(fileName) || todayISO();
+  // Zeitstempel: erster Frame (späteste zuerst), dessen Wert dem Konsens entspricht
+  const timestamps: Record<string, number> = {};
+  const at = (k: keyof PovEntry): number | undefined => perFrame.find((f) => f.v[k] && f.v[k] === consensus[k])?.t;
+  const tId = at("targetId"), tR = at("reason"), tSc = at("sc");
+  if (tId != null) timestamps.targetId = +tId.toFixed(2);
+  if (tR != null) timestamps.reason = +tR.toFixed(2);
+  if (tSc != null) timestamps.sc = +tSc.toFixed(2);
+  const banner = perFrame.find((f) => f.v.targetId === consensus.targetId && f.v.reason === consensus.reason)?.t ?? tId ?? tR ?? Math.max(0.2, dur - 2);
+  timestamps.banner = +banner.toFixed(2);
+  timestamps.pcCheck = +(dur / 2).toFixed(2);
+  return { data: consensus, raw: rawTexts.join("\n"), votes: rawTexts, timestamps };
 }
 
 // ---------------- YouTube (3 Verbindungen) ----------------
@@ -425,7 +384,7 @@ export async function driveBackup(reason: string): Promise<{ ok: boolean; msg: s
   return vaultBackup(reason);
 }
 
-export async function driveRestore(): Promise<{ ok: boolean; msg: string; entries?: PovEntry[]; deleted?: string[] }> {
+export async function driveRestore(): Promise<{ ok: boolean; msg: string; entries?: unknown[]; deleted?: string[]; youtubeConnections?: VaultPayload["youtubeConnections"] }> {
   return vaultRestore();
 }
 
@@ -486,14 +445,8 @@ export function openAcpForId(targetId: string): Window | null {
   return window.open(url, "_blank", "noopener");
 }
 
-export function openAcpSocialClub(sc: string, server = "3"): Window | null {
-  const token = loadBridgeToken();
-  const url = `${ACP_BASE}/de/${server}/logs/socialclub?dc_sc=${encodeURIComponent(sc)}&dc_bridge=${encodeURIComponent(token)}`;
-  return window.open(url, "_blank", "noopener");
-}
-
 export type AcpMessage =
-  | { source: "GRANDRP_ACP_BRIDGE"; bridgeToken: string; type: "SC_RESULT"; targetId: string; sc: string; nickname?: string }
+  | { source: "GRANDRP_ACP_BRIDGE"; bridgeToken: string; type: "SC_RESULT"; targetId: string; sc: string; nickname?: string; reason?: string }
   | { source: "GRANDRP_ACP_BRIDGE"; bridgeToken: string; type: "SC_CHECK_RESULT"; sc: string; nickname: string; charId: string; logins: number; socban: boolean; ban: boolean; server: string }
   | { source: "GRANDRP_ACP_BRIDGE"; bridgeToken: string; type: "PING" };
 
