@@ -634,8 +634,8 @@ export default function App() {
         <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0a101f]/90 backdrop-blur">
           <div className="flex flex-wrap items-center gap-3 px-5 py-3">
             <div className="min-w-0">
-              <h1 className="text-lg font-black leading-tight">{titles[view].t}</h1>
-              <p className="truncate text-xs text-slate-400">{titles[view].d}</p>
+              <h1 className="text-lg font-black leading-tight">{(titles[view] ?? titles.archive).t}</h1>
+              <p className="truncate text-xs text-slate-400">{(titles[view] ?? titles.archive).d}</p>
             </div>
             <div className="mx-auto flex w-full max-w-md items-center gap-2">
               <div className="relative flex-1">
@@ -1379,7 +1379,7 @@ function SettingsView(props: {
             <p className="text-xs text-slate-400">Eine statische Website kann selbst keine Datenbank hosten. Dauerhaft und auf einem anderen PC sind die Daten nur über den verschlüsselten Tresor (Drive und/oder geheimes GitHub-Gist). Google und GitHub sehen ausschließlich Ciphertext.</p>
             <div className="flex flex-wrap items-center gap-2">
               {drive.connected ? <Badge tone="green"><CloudUpload size={12} /> Drive verbunden</Badge> : <Badge tone="zinc">Drive offen</Badge>}
-              {drive.gistId ? <Badge tone="green">Gist {drive.gistId.slice(0, 8)}…</Badge> : <Badge tone="zinc">Gist offen</Badge>}
+              {drive.gistId ? <Badge tone="green">Gist {String(drive.gistId).slice(0, 8)}…</Badge> : <Badge tone="zinc">Gist offen</Badge>}
               <Badge tone="amber">AES-256-GCM</Badge>
               {drive.lastBackup > 0 && <span className="text-xs text-slate-400">Letztes Backup: {new Date(drive.lastBackup).toLocaleString("de-DE")} · {drive.lastBackupCount} Einträge</span>}
             </div>

@@ -212,9 +212,64 @@ export function safeJSON<T>(raw: string | null, fallback: T): T {
   try { return JSON.parse(raw) as T; } catch { return fallback; }
 }
 
+// ---------------- Normalisierung ----------------
+// Alte / fremde / beschädigte Datensätze dürfen niemals einen Absturz auslösen.
+// Es werden NUR Felder auf Standardwerte gesetzt — niemals Einträge verworfen.
+
+const S = (v: unknown): string => {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return "";
+};
+const N = (v: unknown): number => {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+  return Number.isFinite(n) ? n : 0;
+};
+const B = (v: unknown): boolean => v === true;
+
+export function normalizeEntry(raw: unknown): PovEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const id = S(r.id);
+  if (!id) return null;
+  const now = Date.now();
+  const e: PovEntry = {
+    id,
+    targetId: S(r.targetId),
+    reason: S(r.reason),
+    sc: S(r.sc),
+    server: S(r.server),
+    date: S(r.date),
+    discord: S(r.discord),
+    proof: S(r.proof),
+    youtubeId: S(r.youtubeId),
+    youtubeUrl: S(r.youtubeUrl),
+    youtubeTitle: S(r.youtubeTitle),
+    filename: S(r.filename),
+    origFilename: S(r.origFilename),
+    filesize: N(r.filesize),
+    duration: N(r.duration),
+    result: (["BESTÄTIGT", "NEGATIV", "OFFEN", "VERDACHT"].includes(S(r.result)) ? S(r.result) : "OFFEN") as PovResult,
+    status: S(r.status),
+    family: S(r.family),
+    rid: S(r.rid) || S(r.sc),
+    note: S(r.note),
+    permaArchive: B(r.permaArchive),
+    hasVideo: B(r.hasVideo),
+    thumbnail: S(r.thumbnail),
+    createdAt: N(r.createdAt) || now,
+    updatedAt: N(r.updatedAt) || N(r.createdAt) || now,
+    quality: N(r.quality),
+    ocrRaw: S(r.ocrRaw),
+    adminId: S(r.adminId),
+    processingNote: S(r.processingNote),
+  };
+  return e;
+}
+
 // ---------------- Klassifizierung ----------------
 
-const R = (e: PovEntry) => `${e.reason} ${e.status} ${e.result}`.toLowerCase();
+const R = (e: PovEntry) => `${e.reason ?? ""} ${e.status ?? ""} ${e.result ?? ""}`.toLowerCase();
 
 export function isHardbann(e: PovEntry): boolean {
   const t = R(e);
@@ -239,16 +294,17 @@ export function isBan(e: PovEntry): boolean {
     t.includes("fail") || t.includes("troll") || t.includes("crossban") || e.result === "BESTÄTIGT";
 }
 export function isNegative(e: PovEntry): boolean {
-  return e.result === "NEGATIV" || e.reason.toLowerCase().includes("negativ");
+  return e.result === "NEGATIV" || String(e.reason ?? "").toLowerCase().includes("negativ");
 }
 
 export function getMissing(e: Partial<PovEntry>): string[] {
   const m: string[] = [];
-  if (!e.targetId || !/^\d{3,8}$/.test(e.targetId.trim())) m.push("Ziel-ID");
-  if (!e.reason || e.reason.trim().length < 2) m.push("Grund");
-  if (!e.server) m.push("Server");
-  if (!e.date) m.push("Datum");
-  if (!e.sc) m.push("SC/RID");
+  const id = S(e.targetId).trim();
+  if (!id || !/^\d{3,8}$/.test(id)) m.push("Ziel-ID");
+  if (S(e.reason).trim().length < 2) m.push("Grund");
+  if (!S(e.server)) m.push("Server");
+  if (!S(e.date)) m.push("Datum");
+  if (!S(e.sc)) m.push("SC/RID");
   return m;
 }
 
@@ -400,7 +456,8 @@ export function deleteRecord(id: string): void {
 export function mergeEntries(a: PovEntry[], b: PovEntry[]): PovEntry[] {
   const map = new Map<string, PovEntry>();
   const deleted = new Set(loadDeleted());
-  const consider = (e: PovEntry) => {
+  const consider = (raw: unknown) => {
+    const e = normalizeEntry(raw);
     if (!e || !e.id || deleted.has(e.id)) return;
     const prev = map.get(e.id);
     if (!prev) { map.set(e.id, e); return; }
@@ -425,8 +482,18 @@ export function defaultSettings(): AppSettings {
     googleClientId: "", acpAutoOpen: true,
   };
 }
+// Entfernt explizite undefined-Werte, damit alte gespeicherte Objekte
+// keine Felder "löschen" und späteren Code abstürzen lassen.
+export function defined<T extends object>(o: Partial<T>): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o || {})) {
+    if (v !== undefined && v !== null) out[k] = v;
+  }
+  return out as Partial<T>;
+}
+
 export function loadSettings(): AppSettings {
-  return { ...defaultSettings(), ...safeJSON<Partial<AppSettings>>(localStorage.getItem(SETTINGS_KEY), {}) };
+  return { ...defaultSettings(), ...defined<AppSettings>(safeJSON<Partial<AppSettings>>(localStorage.getItem(SETTINGS_KEY), {})) };
 }
 export function saveSettings(s: AppSettings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
@@ -456,7 +523,7 @@ export function defaultDrive(): DriveConfig {
   };
 }
 export function loadDrive(): DriveConfig {
-  return { ...defaultDrive(), ...safeJSON<Partial<DriveConfig>>(localStorage.getItem(DRIVE_KEY), {}) };
+  return { ...defaultDrive(), ...defined<DriveConfig>(safeJSON<Partial<DriveConfig>>(localStorage.getItem(DRIVE_KEY), {})) };
 }
 export function saveDrive(d: DriveConfig): void {
   localStorage.setItem(DRIVE_KEY, JSON.stringify(d));
