@@ -98,36 +98,42 @@ function QueueCard(props: UploadProps & { q: QueueItem; index: number; total: nu
           <select className={inputCls + " !w-auto !py-1.5 text-xs"} value={q.ytSlot} disabled={running || uploaded} onChange={(e) => props.onPatch(q.qid, { ytSlot: parseInt(e.target.value, 10) })} title="YouTube-Verbindung">
             {props.ytConns.map((y, i) => <option key={i} value={i}>YT {i + 1} · {y.name}</option>)}
           </select>
-          {!running && !uploaded && <button className={btnGhost} onClick={() => props.onRun(q.qid)}><Zap size={15} /> Nur prüfen & hochladen</button>}
+          {!running && (!q.ocrDone || !uploaded) && <button className={btnGhost} onClick={() => props.onRun(q.qid)}><Zap size={15} /> {q.ocrDone ? "Hochladen" : "Jetzt analysieren"}</button>}
           {running && <button className={btnGhost} onClick={() => props.onAbort(q.qid)}><X size={15} /> Abbrechen</button>}
-          <button className={btnGhost} onClick={props.onToggle}>{open ? <ChevronUp size={15} /> : <ChevronDown size={15} />} {open ? "Zuklappen" : "Prüfen"}</button>
+          <button className={btnPrimary} disabled={!q.ocrDone} title={q.ocrDone ? "" : "Erst nach der Analyse prüfbar"} onClick={props.onToggle}>
+            {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />} {open ? "Zuklappen" : q.ocrDone ? "Prüfen" : "Analyse läuft…"}
+          </button>
         </div>
       </div>
 
-      {(running || uploaded || q.error) && (
+      {(running || uploaded || q.ocrDone || q.error) && (
         <div className="space-y-2 border-t border-white/5 px-4 py-3">
-          <div>
-            <div className="mb-1 flex justify-between text-[11px] text-slate-400">
-              <span className="flex items-center gap-1.5"><Video size={12} className="text-red-400" /> {q.youtubeStatus || "YouTube"}</span>
-              <span className="tick">{q.progress} %</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-black/50"><div className="h-full rounded-full bg-gradient-to-r from-red-500 to-amber-500 transition-all" style={{ width: `${q.progress}%` }} /></div>
-          </div>
-          {q.processingStatus && (
-            <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
-              <Clock size={12} /> YouTube-Verarbeitung: <b className={q.processingStatus === "succeeded" ? "text-emerald-400" : "text-amber-300"}>{q.processingStatus}</b>
-              {q.youtubeUrl && <a href={q.youtubeUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-cyan-300 hover:underline">{q.youtubeUrl} <ExternalLink size={11} /></a>}
-            </p>
-          )}
+          {/* Schritt 1: Analyse */}
           {(q.status === "ocr" || q.ocrDone) && (
             <div>
               <div className="mb-1 flex justify-between text-[11px] text-slate-400">
-                <span className="flex items-center gap-1.5"><ScanSearch size={12} className="text-amber-400" /> OCR · Bannblock-Erkennung (lokale Originaldatei, Konsens-Voting)</span>
+                <span className="flex items-center gap-1.5"><ScanSearch size={12} className="text-amber-400" /> 1 · Analyse: „Adam Byers[15340] hat …[ID] für 60 Tage gebannt“</span>
                 <span className="tick">{q.ocrProgress} %</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-black/50"><div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all" style={{ width: `${q.ocrProgress}%` }} /></div>
               {q.ocrResult && <p className="mt-1.5 truncate font-mono text-[10px] text-slate-500">{q.ocrResult.slice(0, 200)}</p>}
             </div>
+          )}
+          {/* Schritt 2: Upload */}
+          {(running || uploaded) && (
+            <div>
+              <div className="mb-1 flex justify-between text-[11px] text-slate-400">
+                <span className="flex items-center gap-1.5"><Video size={12} className="text-red-400" /> 2 · {q.youtubeStatus || "YouTube-Upload"}</span>
+                <span className="tick">{q.progress} %</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-black/50"><div className="h-full rounded-full bg-gradient-to-r from-red-500 to-amber-500 transition-all" style={{ width: `${q.progress}%` }} /></div>
+            </div>
+          )}
+          {q.processingStatus && (
+            <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+              <Clock size={12} /> Verarbeitung: <b className={q.processingStatus === "succeeded" ? "text-emerald-400" : "text-amber-300"}>{q.processingStatus}</b>
+              {q.youtubeUrl && <a href={q.youtubeUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-cyan-300 hover:underline">{q.youtubeUrl} <ExternalLink size={11} /></a>}
+            </p>
           )}
           {q.error && <p className="text-xs text-red-300">✗ {q.error}</p>}
         </div>

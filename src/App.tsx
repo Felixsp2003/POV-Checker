@@ -159,7 +159,7 @@ export default function App() {
   // Nach dem Start bzw. Login offene POVs automatisch weiterverarbeiten
   useEffect(() => {
     if (!booted || (settings.loginRequired && !user)) return;
-    if (queue.some((q) => q.status === "wartet" && !q.ocrDone)) void runAll();
+    if (queue.some((q) => (!q.ocrDone || !q.youtubeId) && q.status !== "fehler")) void runAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted, user, queue.length]);
 
@@ -274,13 +274,11 @@ export default function App() {
     autoRunning.current = true;
     try {
       for (;;) {
-        const nextItem = queueRef.current.find((q) => (q.status === "wartet" || (q.status === "fehler" && !q.youtubeId)) && !q.ocrDone);
+        // Zuerst alles analysieren (schnell), danach die Uploads
+        const toAnalyse = queueRef.current.find((q) => !q.ocrDone && q.status !== "fehler");
+        const toUpload = queueRef.current.find((q) => q.ocrDone && !q.youtubeId && q.status !== "fehler");
+        const nextItem = toAnalyse || toUpload;
         if (!nextItem) break;
-        if (nextItem.status === "fehler") {
-          // Nur fortsetzen, wenn wieder ein Kanal frei ist (sonst würde es endlos scheitern)
-          if (pickSlot(nextItem.ytSlot) < 0) break;
-          patchQ(nextItem.qid, { status: "wartet", error: "" });
-        }
         setExpanded((cur) => cur || nextItem.qid);
         const ok = await runPipeline(nextItem.qid);
         if (!ok) {
@@ -306,15 +304,37 @@ export default function App() {
   };
 
   const runPipeline = async (qid: string): Promise<boolean> => {
-    const item = queueRef.current.find((q) => q.qid === qid); if (!item) return false;
+    let item = queueRef.current.find((q) => q.qid === qid); if (!item) return false;
     const file = await getFile(qid);
     if (!file) { patchQ(qid, { status: "fehler", error: "Datei nach Reload nicht gefunden — bitte erneut auswählen." }); return false; }
     const ctrl = new AbortController(); abortRef.current.set(qid, ctrl);
     try {
+      // ---- SCHRITT 1: Analyse zuerst (lokal & schnell) — Ziel-ID sofort sichtbar ----
+      if (!item.ocrDone) {
+        patchQ(qid, { status: "ocr", error: "", ocrProgress: 5, ocrResult: "Bannblock wird gesucht…" });
+        const ocr = await runOcrOnFile(file, item.fileName, settings.adminId, settings.ocrFrames, settings.ocrLanguage,
+          (p) => patchQ(qid, { ocrProgress: Math.min(90, 10 + Math.round((p.frame / p.frames) * 78)), ocrResult: `[${p.variant}] ${p.text.slice(0, 160)}` }));
+        patchQ(qid, { ocrProgress: 94, ocrResult: "Bannscreen wird aufgenommen…" });
+        const bannerAt = ocr.timestamps.banner ?? Math.max(0.2, (item.duration || 2) - 2);
+        const photo = await captureFrameAt(file, bannerAt).catch(() => "");
+        patchQ(qid, (q) => {
+          const o = { ...q.ocr };
+          for (const k of ["targetId", "reason", "sc", "server", "date", "discord"] as const) if (!o[k] && ocr.data[k]) (o as Record<string, unknown>)[k] = ocr.data[k];
+          o.timestamps = { ...ocr.timestamps, ...(o.timestamps || {}) };
+          return { ocrProgress: 100, ocrDone: true, ocr: o, bannerPhoto: photo || q.bannerPhoto, ocrResult: ocr.raw.slice(0, 1500) || "Analyse abgeschlossen." };
+        });
+        const miss = getMissing({ ...item.ocr, ...ocr.data });
+        push(miss.length ? "info" : "ok", miss.length
+          ? `${item.fileName}: Analyse fertig — bitte prüfen: ${miss.join(", ")}.`
+          : `${item.fileName}: ID ${ocr.data.targetId} · ${ocr.data.reason} erkannt.`);
+        setExpanded((cur) => cur || qid);
+        item = queueRef.current.find((q) => q.qid === qid) || item;
+      }
+
+      // ---- SCHRITT 2: YouTube-Upload (Kanalwechsel bei vollem Limit) ----
       let videoId = item.youtubeId, url = item.youtubeUrl;
       if (!videoId) {
         const title = buildFinalFilename({ ...item.ocr, date: item.ocr.date || dateFromFilename(item.fileName) });
-        // Bei vollem Kanal automatisch den nächsten nehmen
         let slotIdx = pickSlot(item.ytSlot);
         let lastQuota = "";
         for (let tries = 0; tries < 3 && slotIdx >= 0; tries++) {
@@ -326,13 +346,13 @@ export default function App() {
             patchQ(qid, { youtubeId: videoId, youtubeUrl: url, youtubeStatus: `Upload 100 % · Kanal ${slotIdx + 1}`, progress: 100, status: "youtube-wartet", processingStatus: "uploaded" });
             const proc = await youtubeWaitProcessing(videoId, slot.accessToken || "", r.simulated, (s) => patchQ(qid, { processingStatus: s }), ctrl.signal);
             if (proc === "failed") throw new Error("YouTube meldet: Verarbeitung fehlgeschlagen.");
-            if (proc === "processing") push("info", `${item.fileName}: hochgeladen — YouTube verarbeitet im Hintergrund weiter. Prüfung läuft trotzdem.`);
             break;
           } catch (err) {
             if (err instanceof YtQuotaError) {
               lastQuota = err.message;
               blockedSlots.current[slotIdx] = Date.now() + 30 * 60 * 1000;  // 30 Min sperren
               const nextSlot = pickSlot(slotIdx + 1);
+              if (nextSlot < 0) { slotIdx = -1; break; }
               push("info", `${err.message} → wechsle auf Kanal ${nextSlot + 1}.`);
               slotIdx = nextSlot;
               continue;
@@ -340,25 +360,10 @@ export default function App() {
             throw err;
           }
         }
-        if (!videoId) throw new Error(lastQuota ? `${lastQuota} Alle Kanäle ausgelastet — POV bleibt in der Warteschlange.` : "Kein YouTube-Kanal verfügbar.");
+        if (!videoId) throw new Error(lastQuota ? `${lastQuota} Alle Kanäle ausgelastet — POV bleibt in der Warteschlange (Analyse ist gespeichert).` : "Kein YouTube-Kanal verfügbar.");
       }
-      patchQ(qid, { status: "ocr", ocrProgress: 5, ocrResult: "Frames werden extrahiert…" });
-      const ocr = await runOcrOnFile(file, item.fileName, settings.adminId, settings.ocrFrames, settings.ocrLanguage,
-        (p) => patchQ(qid, { ocrProgress: Math.min(92, 10 + Math.round((p.frame / p.frames) * 78)), ocrResult: `[${p.variant}] ${p.text.slice(0, 160)}` }));
-      // Bannscreen als Vollbild aufnehmen
-      patchQ(qid, { ocrProgress: 95, ocrResult: "Bannscreen wird aufgenommen…" });
-      const bannerAt = ocr.timestamps.banner ?? Math.max(0.2, (item.duration || 2) - 2);
-      const photo = await captureFrameAt(file, bannerAt).catch(() => "");
-      patchQ(qid, (q) => {
-        const o = { ...q.ocr };
-        for (const k of ["targetId", "reason", "sc", "server", "date", "discord"] as const) if (!o[k] && ocr.data[k]) (o as Record<string, unknown>)[k] = ocr.data[k];
-        if (!o.proof) o.proof = url;
-        o.timestamps = { ...ocr.timestamps, ...(o.timestamps || {}) };
-        return { status: "fertig", ocrProgress: 100, ocrDone: true, ocr: o, bannerPhoto: photo || q.bannerPhoto, ocrResult: ocr.raw.slice(0, 1500) || "OCR abgeschlossen." };
-      });
+      patchQ(qid, (q) => ({ status: "fertig", ocr: { ...q.ocr, proof: q.ocr.proof || url } }));
       saveQueueMeta(queueRef.current.map((q) => q.qid === qid ? { ...q, status: "fertig", youtubeId: videoId, youtubeUrl: url } : q));
-      const miss = getMissing({ ...item.ocr, ...ocr.data });
-      push(miss.length ? "info" : "ok", miss.length ? `${item.fileName}: bitte prüfen — ${miss.join(", ")}.` : `${item.fileName}: vollständig erkannt (ID ${ocr.data.targetId}).`);
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

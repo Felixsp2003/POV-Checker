@@ -8,7 +8,7 @@
 // ============================================================
 import { normalizeEntry, parseMetaContainer, serializeMeta, legacyCount } from "./legacy";
 
-export const APP_VERSION = "V148";
+export const APP_VERSION = "V149";
 export const VIEW_KEY = "grandrp_view_v42";
 export const META_KEY = "grandrp_pov_meta_v42";
 export const DB_NAME = "grandrp_pov_db_v42";

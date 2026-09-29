@@ -82,6 +82,14 @@
     panel("Keine SocialClub-ID gefunden.<br>Prüfe, ob der Filter <b>Character ID</b> Treffer liefert, dann <b>🔎 Senden</b> klicken.", "err");
   }
 
+  // Tab schließt sich selbst, wenn er aus dem Checker geöffnet wurde
+  function closeSoon(ms) {
+    setTimeout(function () {
+      try { window.close(); } catch (e) { /* egal */ }
+      setTimeout(function () { panel("Fertig — dieses Tab kann geschlossen werden.", "ok"); }, 400);
+    }, ms);
+  }
+
   async function runInfo() {
     const id = targetId();
     panel("Lese BannGrund für ID <b>" + (id || "?") + "</b> …", "info");
@@ -90,13 +98,15 @@
       const b = findBan();
       if (b.raw) {
         const ok = send({ type: "REASON_RESULT", targetId: id, reason: b.reason, rawReason: b.raw, admin: b.admin, banDate: b.banDate, socialName: b.socialName, socialId: b.socialId });
-        panel((ok ? "BannGrund gesendet ✓" : "Gefunden, Senden fehlgeschlagen") + "<br><b>" + b.reason + "</b>" +
+        panel((ok ? "BannGrund gesendet ✓ — Fenster schließt …" : "Gefunden, Senden fehlgeschlagen") + "<br><b>" + b.reason + "</b>" +
           (b.admin ? "<br><span style='color:#93a0b8'>Admin: " + b.admin + "</span>" : ""), ok ? "ok" : "err");
+        if (ok) closeSoon(1500);
         return;
       }
       await sleep(1000);
     }
     panel("Kein BannGrund gefunden (Account evtl. nicht gebannt).", "err");
+    closeSoon(4000);
   }
 
   function addButton() {

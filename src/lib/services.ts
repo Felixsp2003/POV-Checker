@@ -95,35 +95,54 @@ function cropChat(canvas: HTMLCanvasElement, wFrac = 0.55, hFrac = 0.6): HTMLCan
 //  • SC = 40-stelliger Hex-Wert (SocialClub) – sonst leer (kommt aus dem ACP)
 //  • Server aus „DE03“-Badge → "3"
 
+// Echter Bannblock im Spiel-Chat (Screenshot):
+//   Administrator Adam Byers[15340] ▢ hat Weird Newbie[14920] ▢ für 60 Tage
+//   gebannt. Grund: PC-Check Positiv
+//   [A] IP: 46.88.96.195 ▢ SC: c3e3850991ad3a4fde764aa5a338545c95a68633
+//   [A] Adam Byers[15340] ▢ hat die Social Club ID <hash> gebannt. Grund: Cheats
+// Zwischen „]“ und „für“ steht ein OCR-Artefakt (Kästchen) → beliebige Zeichen zulassen.
 export function parseOcrText(text: string, adminId: string): Partial<PovEntry> {
   const t = ` ${text.replace(/\s+/g, " ")} `;
   const out: Partial<PovEntry> = {};
   const banned = new Set([adminId, BAN_ADMIN_ID].filter(Boolean));
   const idOk = (id: string) => /^\d{1,6}$/.test(id) && !banned.has(id) && !banned.has(id.replace(/^0+/, ""));
 
-  // 1) Bannblock: „hat <Name> [ID] für/fur <Grund>“
-  let m = t.match(/hat\s+[^\[\]]{0,60}?\[\s*(\d{1,6})\s*\]\s*f[üu]r/i);
+  // 1) Bannblock: „hat <Name>[ID] … für N Tage gebannt. Grund: <Grund>“
+  let m = t.match(/hat\s+(?!die\s+social)[^[\]]{0,60}\[\s*(\d{1,6})\s*\][^[\]]{0,20}?f[üu]r\s*\d{0,4}\s*(?:Tage?|Stunden?|Minuten?)?\s*gebannt/i);
+  if (!m) m = t.match(/hat\s+(?!die\s+social)[^[\]]{0,60}\[\s*(\d{1,6})\s*\][^[\]]{0,20}?f[üu]r/i);
   if (m && idOk(m[1])) out.targetId = m[1];
-  // 2) Fallback: [ID] in eckigen Klammern (ohne Admin-ID)
+  // 2) Fallback: letzte [ID] in eckigen Klammern (Ziel steht nach dem Admin)
   if (!out.targetId) {
     const rx = /\[\s*(\d{1,6})\s*\]/g; let mm: RegExpExecArray | null; const c: string[] = [];
     while ((mm = rx.exec(t)) !== null) if (idOk(mm[1])) c.push(mm[1]);
-    if (c.length) out.targetId = c[c.length - 1]; // im Bannblock steht die Ziel-ID nach dem Admin
+    if (c.length) out.targetId = c[c.length - 1];
   }
-  // 3) Grund nur aus geschlossener Liste
-  const reason = classifyReason(t);
+  // 3) Grund: bevorzugt direkt hinter „gebannt. Grund:“ des Spieler-Banns.
+  //    Der Social-Club-Bann („Grund: Cheats“) wird dabei übersprungen.
+  let reason = "";
+  const gm = t.match(/f[üu]r[^.]{0,40}gebannt\.?\s*Grund\s*[:：]\s*([^\n\r\[]{3,60})/i);
+  if (gm) reason = classifyReason(gm[1]) || "";
+  if (!reason) {
+    const all = [...t.matchAll(/Grund\s*[:：]\s*([^\n\r\[]{3,60})/gi)];
+    for (const g of all) {
+      if (/social\s*club/i.test(t.slice(Math.max(0, (g.index || 0) - 90), g.index))) continue; // SC-Bann überspringen
+      const r = classifyReason(g[1]); if (r) { reason = r; break; }
+    }
+  }
+  if (!reason) reason = classifyReason(t);
   if (reason) out.reason = reason;
   // 4) Server-Badge
   m = t.match(/\bDE\s?0?([1-5])\b/i);
   if (m) out.server = m[1];
-  // 5) Datum
+  // 5) Datum (TT.MM.JJJJ im HUD unten rechts)
   const dm = t.match(/(\d{1,2})[./](\d{1,2})[./](\d{4})/);
   if (dm) out.date = `${dm[3]}-${dm[2].padStart(2, "0")}-${dm[1].padStart(2, "0")}`;
-  // 6) SocialClub-Hash (40 hex), Fallback 32 hex
-  m = t.match(/\b([a-f0-9]{40})\b/i) || t.match(/\b([a-f0-9]{32})\b/i);
+  // 6) SocialClub: bevorzugt „SC: <hash>“, sonst freier 40/32-stelliger Hex-Wert
+  m = t.match(/\bSC\s*[:：]?\s*([a-f0-9]{32,40})\b/i) || t.match(/Social\s*Club\s*ID\s*([a-f0-9]{32,40})\b/i)
+    || t.match(/\b([a-f0-9]{40})\b/i) || t.match(/\b([a-f0-9]{32})\b/i);
   if (m) out.sc = m[1].toLowerCase();
   // 7) Discord-ID
-  m = t.match(/discord\s*[:#]?\s*(\d{15,22})/i) || t.match(/\b(\d{17,20})\b/);
+  m = t.match(/discord\s*[:#]?\s*(\d{15,22})/i);
   if (m && m[1] !== out.targetId) out.discord = m[1];
   return out;
 }

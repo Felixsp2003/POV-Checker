@@ -68,11 +68,11 @@ export function Mini({ label, value, warn }: { label: string; value: string; war
 
 export function StatusPill({ status }: { status: QueueItem["status"] }) {
   const map: Record<string, { label: string; tone: string }> = {
-    "wartet": { label: "Upload wartet · 0 %", tone: "zinc" },
-    "youtube-upload": { label: "YouTube-Upload", tone: "amber" },
+    "wartet": { label: "Wartet auf Analyse", tone: "zinc" },
+    "youtube-upload": { label: "YouTube-Upload läuft", tone: "amber" },
     "youtube-wartet": { label: "YouTube-Verarbeitung…", tone: "sky" },
-    "ocr": { label: "OCR läuft", tone: "orange" },
-    "fertig": { label: "Geprüft — bereit zum Speichern", tone: "green" },
+    "ocr": { label: "Analyse läuft (Bannblock)", tone: "orange" },
+    "fertig": { label: "Analysiert — bereit zum Prüfen", tone: "green" },
     "fehler": { label: "Fehler", tone: "red" },
     "gespeichert": { label: "Gespeichert", tone: "green" },
   };
