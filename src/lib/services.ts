@@ -451,10 +451,19 @@ export async function googleConnect(clientId: string, scopes: string[]): Promise
 
 // ---------------- ACP / Extension Bridge ----------------
 
+// WICHTIG: KEIN "noopener" — sonst ist window.opener null und die Extension/der ACP-Tab
+// kann nichts an den Checker zurücksenden. Fenster bekommt einen festen Namen (Tab wird wiederverwendet),
+// der Inhalt wird ausschließlich über den bridgeToken akzeptiert.
 export function openAcpForId(targetId: string): Window | null {
   const token = loadBridgeToken();
   const url = `${ACP_BASE}/de/3/logs/authorization?dc_id=${encodeURIComponent(targetId)}&dc_bridge=${encodeURIComponent(token)}`;
-  return window.open(url, "_blank", "noopener");
+  return window.open(url, "dc-acp-bridge");
+}
+
+export function openAcpSocialClub(sc: string, server = "3"): Window | null {
+  const token = loadBridgeToken();
+  const url = `${ACP_BASE}/de/${server}/logs/socialclub?dc_sc=${encodeURIComponent(sc)}&dc_bridge=${encodeURIComponent(token)}`;
+  return window.open(url, "dc-acp-bridge");
 }
 
 export type AcpMessage =
@@ -484,7 +493,10 @@ export function extensionFiles(bridgeToken: string): Record<string, string> {
     permissions: ["tabs", "storage", "scripting"],
     host_permissions: ["https://admin.gta5grand.com/*"],
     background: { service_worker: "background.js" },
-    content_scripts: [{ matches: ["https://admin.gta5grand.com/de/*"], js: ["website-bridge.js", "content.js"], run_at: "document_idle" }],
+    content_scripts: [
+      { matches: ["https://admin.gta5grand.com/de/*"], js: ["website-bridge.js", "content.js"], run_at: "document_idle" },
+      { matches: ["https://*.github.io/*", "http://localhost/*", "http://127.0.0.1/*"], js: ["dc-receiver.js"], run_at: "document_start" },
+    ],
   }, null, 2);
 
   const background = `// GrandRP ACP Bridge — background.js (MV3)\nconst BRIDGE = "GRANDRP_ACP_BRIDGE";\nchrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {\n  if (!msg || msg.source !== BRIDGE) return false;\n  // an alle DC-Checker-Tabs weiterleiten\n  chrome.tabs.query({}, (tabs) => {\n    for (const t of tabs) {\n      if (t.id && sender.tab && t.id !== sender.tab.id) {\n        chrome.tabs.sendMessage(t.id, msg).catch(() => {});\n      }\n    }\n  });\n  sendResponse({ ok: true });\n  return true;\n});\n`;
@@ -495,9 +507,12 @@ export function extensionFiles(bridgeToken: string): Record<string, string> {
 
   const readme = `# GrandRP ACP Bridge — Installation\n\n1. Ordner \`acp-extension\` erstellen und alle 5 Dateien hineinlegen.\n2. Chrome/Edge: \`chrome://extensions\` → Entwicklermodus → „Entpackte Erweiterung laden“.\n3. Grand RP Admin Panel öffnen: https://admin.gta5grand.com/\n4. Im DC Checker: Bridge-Token (Einstellungen) = \`${bridgeToken.slice(0, 12)}…\` — wird automatisch per URL übergeben.\n5. Aus dem DC Checker „SC auslesen“ klicken → ACP-Tab öffnet sich → SC wird automatisch übernommen.\n\nKostenlos, keine Server, Token-geschützt (bridgeToken).\n`;
 
+  const receiver = `// dc-receiver.js — läuft auf der DC-Checker-Seite (GitHub Pages / localhost)\\n// und reicht Nachrichten der Extension per window.postMessage an die App weiter.\\n// Die App verwirft alles ohne gültigen bridgeToken.\\n(function () {\\n  const BRIDGE = "GRANDRP_ACP_BRIDGE";\\n  chrome.runtime.onMessage.addListener(function (msg) {\\n    if (!msg || msg.source !== BRIDGE || !msg.bridgeToken) return;\\n    window.postMessage(msg, window.location.origin);\\n  });\\n})();\\n`;
+
   return {
     "manifest.json": manifest,
     "background.js": background,
+    "dc-receiver.js": receiver,
     "website-bridge.js": bridge,
     "content.js": content,
     "README.md": readme,

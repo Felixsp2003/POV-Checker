@@ -4,7 +4,7 @@ import {
   APP_VERSION, AppSettings, DB_NAME, DriveConfig, META_KEY, PC_CHECKER_LEAD, PC_CHECKER_POOL, PovEntry, SERVERS, STORE, YTConnection,
   adoptYtConnections, loadAllRecords, loadCustomCheckers, loadDeleted, loadMeta, loadUsers, mergeEntries, metaDiagnostics, saveCustomCheckers, saveDeleted, saveUsers, serverLabel, sha256, uid,
 } from "../lib/core";
-import { downloadExtension, downloadLocalBackup, driveBackup, driveRestore, googleConnect, YT_SCOPES, DRIVE_SCOPES } from "../lib/services";
+import { downloadExtension, downloadLocalBackup, driveBackup, driveRestore, googleConnect, openAcpForId, YT_SCOPES, DRIVE_SCOPES } from "../lib/services";
 import { downloadEncryptedVault, importEncryptedFile } from "../lib/vault";
 import { Badge, CodeBox, Field, Mini, Push, btnDanger, btnGhost, btnPrimary, inputCls } from "../ui";
 import { PwForm } from "./Modals";
@@ -226,8 +226,13 @@ export default function SettingsView(props: SettingsProps) {
               <button className={btnGhost} onClick={() => window.open("https://admin.gta5grand.com/", "_blank", "noopener")}><ExternalLink size={15} /> ACP öffnen</button>
               <button className={btnGhost} onClick={() => {
                 const last = (window as unknown as { __DC_LAST_SC?: unknown }).__DC_LAST_SC;
-                push(last ? "ok" : "info", last ? `Bridge aktiv — letzte Nachricht: ${JSON.stringify(last).slice(0, 160)}` : "Bridge lauscht — noch keine Nachricht. Extension installiert? ACP-Tab aus dem Checker öffnen.");
-              }}><Zap size={15} /> Bridge testen</button>
+                if (last) { push("ok", `Bridge aktiv — letzte Nachricht: ${JSON.stringify(last).slice(0, 180)}`); return; }
+                push("info", "Öffne jetzt das ACP mit Bridge-Token. Extension installiert? → SC wird gesendet. Ohne Extension: SC im ACP ablesen und in das Feld „SOC / SC“ einfügen.");
+                openAcpForId("__bridge_test__");
+              }}><Zap size={15} /> Bridge testen (ACP öffnen)</button>
+              <button className={btnGhost} onClick={() => {
+                push("info", "Funktioniert der automatische Transfer nicht, kopiere den SC-Wert aus dem ACP (40-stellig) und füge ihn im Formular in „SOC / SC aus Adminpanel“ ein.");
+              }}><Copy size={15} /> Anleitung: SC manuell</button>
             </div>
           </div>
         )}
