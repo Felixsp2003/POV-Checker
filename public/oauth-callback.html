@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OAuth Callback — Grand RP DC Checker</title>
+  <style>
+    body { background:#070b14; color:#e6ecf7; font-family:system-ui,sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+    .box { border:1px solid #223; background:#0d1424; border-radius:14px; padding:28px 32px; max-width:480px; text-align:center; }
+    h1 { font-size:18px; margin:0 0 8px; } p { font-size:13px; color:#93a0b8; }
+    code { color:#f59e0b; font-size:12px; word-break:break-all; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>🔐 OAuth abgeschlossen</h1>
+    <p id="msg">Token wird an den DC Checker übergeben …</p>
+    <p><code id="detail"></code></p>
+  </div>
+  <script>
+    (function () {
+      try {
+        var hash = location.hash || "";
+        var search = location.search || "";
+        var params = new URLSearchParams(hash.replace(/^#/, "") + "&" + search.replace(/^\?/, ""));
+        var token = params.get("access_token") || "";
+        var code = params.get("code") || "";
+        var state = params.get("state") || "";
+        var err = params.get("error") || "";
+        if (window.opener) {
+          window.opener.postMessage({
+            source: "GRANDRP_OAUTH",
+            type: err ? "OAUTH_ERROR" : "OAUTH_RESULT",
+            access_token: token, code: code, state: state, error: err
+          }, "*");
+        }
+        document.getElementById("msg").textContent = err
+          ? ("Fehler: " + err + " — Fenster kann geschlossen werden.")
+          : "Erfolgreich! Dieses Fenster kann geschlossen werden.";
+        document.getElementById("detail").textContent = state || "";
+        setTimeout(function () { try { window.close(); } catch (e) {} }, 2500);
+      } catch (e) {
+        document.getElementById("msg").textContent = "Fehler: " + e.message;
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "GrandRP ACP Bridge — DC Checker",
+  "version": "1.5.0",
+  "description": "Liest SC/RID aus dem Grand RP Admin Panel und sendet sie token-geschützt an den DC Checker.",
+  "permissions": ["tabs", "storage"],
+  "host_permissions": [
+    "https://admin.gta5grand.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://admin.gta5grand.com/de/*"],
+      "js": ["website-bridge.js", "content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.github.io/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["dc-receiver.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

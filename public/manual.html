@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manuelle Korrektur — Grand RP DC Checker</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { background:#070b14; color:#e6ecf7; font-family:system-ui,sans-serif; margin:0; padding:20px; }
+    h1 { font-size:18px; margin:0; } .sub { font-size:12px; color:#93a0b8; margin:4px 0 16px; }
+    .grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; max-width:1100px; margin:0 auto; }
+    @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
+    video { width:100%; max-height:52vh; border-radius:12px; background:#000; border:1px solid #223; }
+    .card { background:#0d1424; border:1px solid #223; border-radius:12px; padding:14px; }
+    label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#93a0b8; margin:10px 0 4px; font-weight:700;}
+    input, select { width:100%; background:#0b1326; border:1px solid #2a3a5c; color:#e6ecf7; border-radius:8px; padding:9px 10px; font-size:14px; }
+    .row { display:flex; gap:10px; margin-top:14px; }
+    button { flex:1; border:0; border-radius:10px; padding:11px; font-weight:800; font-size:14px; cursor:pointer; }
+    .ok { background:#f59e0b; color:#131006; } .ghost { background:#1b2540; color:#e6ecf7; }
+    .pos { font-size:12px; color:#93a0b8; margin-top:8px; } .pos b { color:#e6ecf7; font-variant-numeric:tabular-nums; }
+  </style>
+</head>
+<body>
+  <div style="max-width:1100px;margin:0 auto 12px;">
+    <h1>✎ Manuelle Korrektur (manual.html)</h1>
+    <p class="sub">Video an der relevanten Stelle anhalten → Werte ablesen → „Übernehmen“ sendet per <b>postMessage</b> an die Hauptseite.</p>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <video id="v" controls></video>
+      <p class="pos">Position: <b id="stamp">—</b> · Datei: <b id="fname">—</b></p>
+      <p class="pos">Tipp: Frame für Frame mit <b>,</b> / <b>.</b> springen (je nach Browser).</p>
+    </div>
+    <div class="card">
+      <label>Ziel-ID</label><input id="targetId" inputmode="numeric" />
+      <label>Grund</label><input id="reason" list="reasons" />
+      <datalist id="reasons">
+        <option value="Cheating"></option><option value="PC-Check"></option>
+        <option value="PC-Check Verweigerung"></option><option value="Trolling"></option>
+        <option value="Cleaning"></option><option value="Redux"></option>
+        <option value="Banevading"></option><option value="Crossban"></option>
+        <option value="Hardbann"></option><option value="Soc-Ban"></option><option value="Perma-Ban"></option>
+      </datalist>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div><label>SC / RID</label><input id="sc" /></div>
+        <div><label>Server</label><select id="server"><option>DE01</option><option>DE02</option><option>DE03</option><option>DE04</option><option>DE05</option><option>EN01</option><option>EN02</option><option>JP01</option><option>TR01</option><option>US01</option></select></div>
+        <div><label>Datum</label><input id="date" type="date" /></div>
+        <div><label>Discord</label><input id="discord" /></div>
+      </div>
+      <label>Proof</label><input id="proof" />
+      <div class="row">
+        <button class="ghost" onclick="window.close()">Abbrechen</button>
+        <button class="ok" onclick="apply()">Übernehmen → Hauptseite</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Video-Blob aus IndexedDB laden (gleiche DB wie Hauptseite: grandrp_pov_db_v42 / videos)
+    var q = new URLSearchParams(location.search);
+    var vid = q.get("video") || "";       // Entry-ID oder q_<qid>
+    var pre = {};
+    try { pre = JSON.parse(q.get("pre") || "{}"); } catch (e) {}
+    ["targetId","reason","sc","server","date","discord","proof"].forEach(function (k) {
+      if (pre[k]) document.getElementById(k).value = pre[k];
+    });
+    if (!document.getElementById("date").value) {
+      document.getElementById("date").value = new Date().toISOString().slice(0, 10);
+    }
+    document.getElementById("fname").textContent = q.get("name") || vid || "—";
+    var v = document.getElementById("v");
+    v.addEventListener("timeupdate", function () {
+      document.getElementById("stamp").textContent = v.currentTime.toFixed(1) + "s";
+    });
+    if (vid) {
+      var req = indexedDB.open("grandrp_pov_db_v42", 42);
+      req.onsuccess = function () {
+        var tx = req.result.transaction("videos", "readonly");
+        var get = tx.objectStore("videos").get(vid);
+        get.onsuccess = function () {
+          if (get.result && get.result.blob) v.src = URL.createObjectURL(get.result.blob);
+          else document.getElementById("fname").textContent = "Video nicht in IndexedDB gefunden";
+        };
+      };
+    }
+    function apply() {
+      var patch = {
+        targetId: document.getElementById("targetId").value.trim(),
+        reason: document.getElementById("reason").value.trim(),
+        sc: document.getElementById("sc").value.trim(),
+        server: document.getElementById("server").value,
+        date: document.getElementById("date").value,
+        discord: document.getElementById("discord").value.trim(),
+        proof: document.getElementById("proof").value.trim()
+      };
+      if (window.opener) {
+        window.opener.postMessage({ source: "GRANDRP_MANUAL", type: "MANUAL_RESULT", patch: patch }, "*");
+      }
+      try { localStorage.setItem("grandrp_manual_result_v42", JSON.stringify({ at: Date.now(), patch: patch })); } catch (e) {}
+      try { window.close(); } catch (e) {}
+      alert("Übernommen — Hauptseite aktualisiert den Datensatz.");
+    }
+  </script>
+</body>
+</html>
