@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Archive, BadgeCheck, CircleAlert, Copy, Eye, Film, FolderInput, FolderOutput, Link2, Pencil, Play, Trash2, Users } from "lucide-react";
-import { PovEntry, formatBytes, formatDate, getMissing, getVideo, serverLabel } from "../lib/core";
+import { PovEntry, formatBytes, formatDate, getMissing, getVideo, loadPhoto, serverLabel } from "../lib/core";
 import { Badge, ModalShell, btnDanger, btnGhost, btnPrimary, copyText, mini } from "../ui";
 
 export type ArchiveFilter = "alle" | "bans" | "pc" | "soc" | "hard" | "cheater" | "negativ" | "verweigert" | "ohne-video" | "archiv" | "doppelt";
@@ -163,6 +163,12 @@ export function CasesView(p: { list: PovEntry[]; onEdit: (e: PovEntry) => void; 
 
 export function DetailModal({ entry, onClose, onEdit, onPlay, dup }: { entry: PovEntry; onClose: () => void; onEdit: () => void; onPlay: () => void; dup: boolean }) {
   const e = entry; const miss = getMissing(e); const thumb = useThumb(e);
+  const [photo, setPhoto] = useState("");
+  useEffect(() => {
+    let u = ""; let alive = true;
+    void loadPhoto(e.id).then((b) => { if (b && alive) { u = URL.createObjectURL(b); setPhoto(u); } });
+    return () => { alive = false; if (u) URL.revokeObjectURL(u); };
+  }, [e.id]);
   const rows: Array<[string, string]> = [
     ["Ziel-ID", e.targetId], ["Grund", e.reason], ["Ergebnis", e.manualResult || "—"], ["SOC / SC", e.sc || "—"], ["Server", serverLabel(e.server)],
     ["Datum", formatDate(e.date)], ["Discord", e.discord || "—"], ["Im Dokument", e.documentStatus || "—"], ["PC Checker", (e.pcCheckers || []).join(", ") || "—"],
@@ -190,6 +196,12 @@ export function DetailModal({ entry, onClose, onEdit, onPlay, dup }: { entry: Po
         {(e.youtubeUrl || e.proof) && <p className="truncate text-xs">Proof: <a href={e.proof || e.youtubeUrl} target="_blank" rel="noreferrer" className="text-cyan-300 hover:underline">{e.proof || e.youtubeUrl}</a></p>}
         {Object.keys(e.timestamps || {}).length > 0 && <p className="text-xs text-slate-400">Zeitmarken: {Object.entries(e.timestamps).map(([k, v]) => `${k} ${v}s`).join(" · ")}</p>}
         {e.note && <p className="rounded-xl border border-white/10 bg-black/30 p-3 text-xs"><b>Notiz:</b> {e.note}</p>}
+        {photo && (
+          <div className="rounded-xl border border-white/10 bg-black/40 p-2">
+            <p className="mb-1.5 px-1 text-[11px] font-black uppercase tracking-wider text-slate-300">Bannscreen · Info-Foto {e.timestamps?.banner != null && <span className="font-normal normal-case tracking-normal text-slate-500">bei {e.timestamps.banner}s</span>}</p>
+            <img src={photo} alt="Bannscreen" className="w-full rounded-lg" />
+          </div>
+        )}
         {e.ocrRaw && <details className="rounded-xl border border-white/10 bg-black/30 p-3 text-xs"><summary className="cursor-pointer font-bold">OCR-Rohdaten</summary><pre className="mt-2 whitespace-pre-wrap font-mono text-[10px] text-slate-400">{e.ocrRaw}</pre></details>}
         <div className="flex flex-wrap gap-2">
           <button className={btnPrimary} onClick={onPlay}><Play size={15} /> Video / YouTube öffnen</button>

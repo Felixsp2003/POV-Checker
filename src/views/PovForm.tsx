@@ -2,12 +2,12 @@
 // Video + Zeitmarken · Ziel-ID · Ergebnis · Grund · SOC/SC (ACP) · Server · Datum · Proof ·
 // Finaler Dateiname · PC Checker (Leiter + 4) · Bann-Typen · Perma/Archiv/Nicht gebannt · Im Dokument
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, ExternalLink, Link2, Plus, Clock, MonitorPlay } from "lucide-react";
+import { Camera, Copy, ExternalLink, Link2, Plus, Clock, MonitorPlay } from "lucide-react";
 import {
   ALLOWED_REASONS, BAN_TYPES, DOCUMENT_STATUS, PC_CHECKER_LEAD, PC_CHECKER_MAX, SERVERS,
   PovEntry, autoPerma, autoResult, autoTypes, buildFinalFilename, getMissing, serverLabel, formatDuration,
 } from "../lib/core";
-import { Chip, Field, Toggle, btnGhost, btnPink, copyText, inputCls, mini } from "../ui";
+import { Badge, Chip, Field, Toggle, btnGhost, btnPink, copyText, inputCls, mini } from "../ui";
 
 export interface PovFormProps {
   value: Partial<PovEntry>;
@@ -21,6 +21,8 @@ export interface PovFormProps {
   pool: string[];
   onAddPool: (name: string) => void;
   showVideo?: boolean;
+  bannerPhoto?: string;                       // Vollbild des Bannscreens
+  onRecapture?: (sec: number) => void;        // Foto an aktueller Position neu aufnehmen
 }
 
 const TS_CHIPS: Array<{ key: string; label: string }> = [
@@ -204,6 +206,29 @@ export default function PovForm(p: PovFormProps) {
         <p className="rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-xs font-semibold text-orange-200">⚠ Bitte prüfen: {missing.join(" · ")}</p>
       ) : (
         <p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200">✓ Vollständig — {finalName}</p>
+      )}
+
+      {/* Bannscreen in voller Breite — Klick springt im Video zur Fundstelle */}
+      {(p.bannerPhoto || ts.banner != null) && (
+        <div className="rounded-xl border border-white/10 bg-black/40 p-2">
+          <div className="mb-1.5 flex flex-wrap items-center gap-2 px-1">
+            <p className="text-[11px] font-black uppercase tracking-wider text-slate-300">Bannscreen · Info-Foto</p>
+            {ts.banner != null && <Badge tone="pink">{fmtTs(ts.banner)}</Badge>}
+            <span className="text-[11px] text-slate-500">Klick auf das Bild springt im Video zu dieser Stelle.</span>
+            {p.onRecapture && p.videoUrl && (
+              <button type="button" className={btnGhost + mini + " ml-auto"} onClick={() => { const t = videoRef.current?.currentTime ?? ts.banner ?? 0; p.onChange({ timestamps: { ...ts, banner: +t.toFixed(2) } }); p.onRecapture!(t); }}>
+                <Camera size={12} /> Foto an aktueller Position
+              </button>
+            )}
+          </div>
+          {p.bannerPhoto ? (
+            <button type="button" onClick={() => jump("banner")} className="block w-full overflow-hidden rounded-lg" title="Zum Bannblock im Video springen">
+              <img src={p.bannerPhoto} alt="Bannscreen" className="w-full cursor-zoom-in rounded-lg transition hover:opacity-90" />
+            </button>
+          ) : (
+            <p className="px-1 py-3 text-center text-xs text-slate-500">Noch kein Foto — nach der Prüfung wird der Bannscreen automatisch aufgenommen.</p>
+          )}
+        </div>
       )}
     </div>
   );

@@ -262,100 +262,153 @@ function fakeVideoId(): string {
 
 // Simuliert resumable Upload in Chunks (liest echte Datei-Slices → Fortschritt real),
 // nutzt echte YouTube Data API, falls Token vorhanden, sonst Offline-Simulation.
+// Quota/Limit eines Kanals erschöpft → App wechselt zum nächsten Slot
+export class YtQuotaError extends Error {
+  constructor(msg: string) { super(msg); this.name = "YtQuotaError"; }
+}
+function isQuotaText(t: string): boolean {
+  return /quotaExceeded|uploadLimitExceeded|numberOfItemsInPlaylist|dailyLimitExceeded|rateLimitExceeded|userRequestsExceeded/i.test(t);
+}
+
 export async function youtubeUpload(
   file: Blob, title: string, slot: number, accessToken: string,
   onProgress: (p: YtProgress) => void, signal?: AbortSignal,
 ): Promise<{ videoId: string; url: string; simulated: boolean }> {
-  const CHUNK = 2 * 1024 * 1024;
+  const CHUNK = 4 * 1024 * 1024;
   const total = file.size || 1;
   let uploaded = 0;
-  onProgress({ percent: 0, status: `Slot ${slot + 1} · Upload startet (unlisted)…` });
+  const pct = () => Math.round((uploaded / total) * 100);
+  onProgress({ percent: 0, status: `Kanal ${slot + 1} · Upload startet (unlisted)…` });
 
-  // Echte API versuchen, wenn Token vorhanden
   if (accessToken) {
-    try {
-      const init = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json; charset=UTF-8",
-        },
-        body: JSON.stringify({
-          snippet: { title: title.slice(0, 100), description: "Grand RP POV — DC Checker Upload", categoryId: "22" },
-          status: { privacyStatus: "unlisted", selfDeclaredMadeForKids: false },
-        }),
-      });
-      if (init.ok) {
-        const sessionUrl = init.headers.get("Location") || (await init.text());
-        if (sessionUrl && sessionUrl.startsWith("http")) {
-          while (uploaded < total) {
-            if (signal?.aborted) throw new Error("aborted");
-            const end = Math.min(uploaded + CHUNK, total);
-            const chunk = file.slice(uploaded, end);
-            const put = await fetch(sessionUrl, {
-              method: "PUT",
-              headers: { "Content-Range": `bytes ${uploaded}-${end - 1}/${total}`, "Content-Type": "video/*" },
-              body: chunk,
-            });
-            uploaded = end;
-            onProgress({ percent: Math.round((uploaded / total) * 100), status: `Slot ${slot + 1} · Upload ${Math.round((uploaded / total) * 100)} %` });
-            if (put.status === 200 || put.status === 201) {
-              const data = await put.json();
-              const vid = data.id as string;
-              return { videoId: vid, url: `https://youtu.be/${vid}`, simulated: false };
-            }
-            if (put.status !== 308) break; // Fehler → Simulation
-            await new Promise((r) => setTimeout(r, 30));
-          }
-        }
+    const init = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": file.type || "video/*", "X-Upload-Content-Length": String(total) },
+      body: JSON.stringify({
+        snippet: { title: title.slice(0, 100), description: "Grand RP POV — DC Checker", categoryId: "22" },
+        status: { privacyStatus: "unlisted", selfDeclaredMadeForKids: false },
+      }),
+    }).catch((e) => { throw new Error(`Netzwerkfehler beim Upload-Start: ${e instanceof Error ? e.message : String(e)}`); });
+
+    if (!init.ok) {
+      const txt = await init.text().catch(() => "");
+      if (init.status === 401 || init.status === 403) {
+        if (isQuotaText(txt) || init.status === 403) throw new YtQuotaError(`Kanal ${slot + 1}: Limit/Quota erreicht oder Zugriff abgelaufen (${init.status}).`);
       }
-    } catch { /* Fallback Simulation */ }
+      throw new Error(`Upload-Start fehlgeschlagen (${init.status}). ${txt.slice(0, 160)}`);
+    }
+    const sessionUrl = init.headers.get("Location") || "";
+    if (!sessionUrl.startsWith("http")) throw new Error("YouTube hat keine Upload-Adresse geliefert (Location-Header fehlt).");
+
+    while (uploaded < total) {
+      if (signal?.aborted) throw new Error("abgebrochen");
+      const end = Math.min(uploaded + CHUNK, total);
+      const put = await fetch(sessionUrl, {
+        method: "PUT",
+        headers: { "Content-Range": `bytes ${uploaded}-${end - 1}/${total}`, "Content-Type": file.type || "video/*" },
+        body: file.slice(uploaded, end),
+      }).catch((e) => { throw new Error(`Netzwerkfehler beim Upload: ${e instanceof Error ? e.message : String(e)}`); });
+
+      if (put.status === 200 || put.status === 201) {
+        uploaded = total;
+        onProgress({ percent: 100, status: `Kanal ${slot + 1} · Upload 100 %` });
+        const data = await put.json();
+        return { videoId: data.id as string, url: `https://youtu.be/${data.id}`, simulated: false };
+      }
+      if (put.status === 308) {
+        // Server bestätigt den Fortschritt über Range; sonst lokal weiterzählen
+        const range = put.headers.get("Range");
+        const m = range && range.match(/bytes=0-(\d+)/);
+        uploaded = m ? parseInt(m[1], 10) + 1 : end;
+        onProgress({ percent: pct(), status: `Kanal ${slot + 1} · Upload ${pct()} %` });
+        continue;
+      }
+      const txt = await put.text().catch(() => "");
+      if (put.status === 403 || isQuotaText(txt)) throw new YtQuotaError(`Kanal ${slot + 1}: Upload-Limit erreicht.`);
+      throw new Error(`Upload abgebrochen (${put.status}). ${txt.slice(0, 160)}`);
+    }
+    throw new Error("Upload unvollständig beendet.");
   }
 
-  // Offline-Simulation (kostenlos, ohne Quota)
-  uploaded = 0;
+  // Ohne Verbindung: Simulation (kein echtes Video auf YouTube)
   while (uploaded < total) {
-    if (signal?.aborted) throw new Error("Upload abgebrochen");
+    if (signal?.aborted) throw new Error("abgebrochen");
     await new Promise((r) => setTimeout(r, 60));
-    // echte Slice lesen (Speicher-/Datei-Check)
     try { await file.slice(uploaded, Math.min(uploaded + CHUNK, total)).arrayBuffer(); } catch { /* noop */ }
     uploaded = Math.min(total, uploaded + CHUNK + Math.floor(Math.random() * CHUNK));
-    onProgress({ percent: Math.round((uploaded / total) * 100), status: `Slot ${slot + 1} · Upload ${Math.round((uploaded / total) * 100)} %` });
+    onProgress({ percent: pct(), status: `Simulation · Upload ${pct()} %` });
   }
   const vid = fakeVideoId();
   return { videoId: vid, url: `https://youtu.be/${vid}`, simulated: true };
 }
 
+// YouTube kann Stunden „processing“ melden. Die POV ist aber sofort gespeichert und
+// OCR läuft ohnehin auf der lokalen Datei — deshalb wird nur kurz gewartet (Zeitlimit).
+const PROCESS_WAIT_MS = 45_000;
+
 export async function youtubeWaitProcessing(
   videoId: string, accessToken: string, simulated: boolean,
   onStatus: (s: string) => void, signal?: AbortSignal,
-): Promise<"succeeded" | "failed"> {
+): Promise<"succeeded" | "failed" | "processing"> {
   if (!accessToken || simulated) {
-    const steps = ["uploaded", "processing", "processing", "succeeded"];
-    for (const s of steps) {
+    for (const s of ["uploaded", "processing", "succeeded"]) {
       if (signal?.aborted) throw new Error("abgebrochen");
       onStatus(s);
-      await new Promise((r) => setTimeout(r, 900));
+      await new Promise((r) => setTimeout(r, 600));
     }
     return "succeeded";
   }
-  for (let i = 0; i < 40; i++) {
+  const until = Date.now() + PROCESS_WAIT_MS;
+  let last = "uploaded";
+  while (Date.now() < until) {
     if (signal?.aborted) throw new Error("abgebrochen");
     try {
-      const r = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=processingDetails&id=${videoId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const r = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=processingDetails,status&id=${videoId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (r.ok) {
         const j = await r.json();
-        const st = j.items?.[0]?.processingDetails?.processingStatus || "processing";
-        onStatus(st);
-        if (st === "succeeded") return "succeeded";
-        if (st === "failed" || st === "terminated") return "failed";
-      } else onStatus("processing");
-    } catch { onStatus("processing"); }
-    await new Promise((r) => setTimeout(r, 8000));
+        const it = j.items?.[0];
+        const st = it?.processingDetails?.processingStatus || "processing";
+        const up = it?.status?.uploadStatus || "";
+        last = st;
+        if (st === "succeeded" || up === "processed") { onStatus("succeeded"); return "succeeded"; }
+        if (st === "failed" || st === "terminated" || up === "failed" || up === "rejected") { onStatus("failed"); return "failed"; }
+        const left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+        onStatus(`${st} · noch ${left} s`);
+      }
+    } catch { /* Netz kurz weg — weiter versuchen */ }
+    await new Promise((r) => setTimeout(r, 4000));
   }
-  return "succeeded";
+  // Zeitlimit: Video ist hochgeladen, YouTube rechnet im Hintergrund weiter
+  onStatus(last === "succeeded" ? "succeeded" : "hochgeladen · YouTube verarbeitet weiter");
+  return "processing";
+}
+
+// Einzelbild an einer bestimmten Sekunde (Bannscreen-Foto)
+export function captureFrameAt(file: Blob, atSec: number, maxW = 1280): Promise<string> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    let done = false;
+    const finish = (d: string) => { if (done) return; done = true; try { URL.revokeObjectURL(url); } catch { /* egal */ } resolve(d); };
+    v.muted = true; v.preload = "auto"; v.src = url;
+    v.onloadedmetadata = () => {
+      const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
+      const t = dur ? Math.min(Math.max(atSec, 0.1), Math.max(dur - 0.15, 0.1)) : Math.max(atSec, 0.1);
+      try { v.currentTime = t; } catch { finish(""); }
+    };
+    v.onseeked = () => {
+      try {
+        const c = document.createElement("canvas");
+        const scale = Math.min(1, maxW / (v.videoWidth || maxW));
+        c.width = Math.max(2, Math.round((v.videoWidth || 1280) * scale));
+        c.height = Math.max(2, Math.round((v.videoHeight || 720) * scale));
+        c.getContext("2d")!.drawImage(v, 0, 0, c.width, c.height);
+        finish(c.toDataURL("image/jpeg", 0.85));
+      } catch { finish(""); }
+    };
+    v.onerror = () => finish("");
+    setTimeout(() => finish(""), 10000);
+  });
 }
 
 export async function youtubeSetTitle(videoId: string, title: string, accessToken: string): Promise<boolean> {

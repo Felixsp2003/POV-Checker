@@ -8,7 +8,7 @@
 // ============================================================
 import { normalizeEntry, parseMetaContainer, serializeMeta, legacyCount } from "./legacy";
 
-export const APP_VERSION = "V147";
+export const APP_VERSION = "V148";
 export const VIEW_KEY = "grandrp_view_v42";
 export const META_KEY = "grandrp_pov_meta_v42";
 export const DB_NAME = "grandrp_pov_db_v42";
@@ -149,6 +149,7 @@ export interface QueueItem {
   createdAt: number;
   thumbUrl?: string;
   duration?: number;
+  bannerPhoto?: string;   // Vollbild des Bannscreens (dataURL, nur im Arbeitsspeicher)
 }
 
 export interface YTConnection {
@@ -578,7 +579,17 @@ export function loadQueueMeta(): QueueItem[] {
   return Array.isArray(v) ? (v.filter((x) => isObj(x) && typeof x.qid === "string") as QueueItem[]).map((q) => ({ ...q, ocr: isObj(q.ocr) ? q.ocr : {} })) : [];
 }
 export function saveQueueMeta(q: QueueItem[]): void {
-  try { localStorage.setItem(queueKey(), JSON.stringify(q.map((x) => ({ ...x, thumbUrl: undefined, ocrResult: (x.ocrResult || "").slice(0, 600) })))); } catch { /* noop */ }
+  try { localStorage.setItem(queueKey(), JSON.stringify(q.map((x) => ({ ...x, thumbUrl: undefined, bannerPhoto: undefined, ocrResult: (x.ocrResult || "").slice(0, 600) })))); } catch { /* noop */ }
+}
+
+// Bannscreen-Foto eines gespeicherten Eintrags (IndexedDB, nicht localStorage)
+export async function savePhoto(id: string, dataUrl: string): Promise<void> {
+  if (!dataUrl) return;
+  const blob = await (await fetch(dataUrl)).blob();
+  await putVideo("photo_" + id, blob, { photo: true });
+}
+export async function loadPhoto(id: string): Promise<Blob | null> {
+  return getVideo("photo_" + id).catch(() => null);
 }
 
 // PC-Checker: eigene Namen (gleicher Key wie alte App)

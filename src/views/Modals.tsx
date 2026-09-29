@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { KeyRound, Save, XCircle } from "lucide-react";
-import { DB_NAME, PovEntry, STORE, buildFinalFilename, emptyEntry, findVideo, getMissing } from "../lib/core";
+import { DB_NAME, PovEntry, STORE, buildFinalFilename, emptyEntry, findVideo, getMissing, loadPhoto, savePhoto } from "../lib/core";
+import { captureFrameAt } from "../lib/services";
 import { Badge, Field, ModalShell, btnGhost, btnPrimary, inputCls } from "../ui";
 import PovForm from "./PovForm";
 
@@ -11,16 +12,19 @@ export function EditModal({ entry, onClose, onSave, pool, onAddPool, acpStatus, 
 }) {
   const [f, setF] = useState<PovEntry>({ ...entry });
   const [url, setUrl] = useState("");
+  const [photo, setPhoto] = useState("");
   useEffect(() => {
-    let u = ""; let alive = true;
+    let u = ""; let p = ""; let alive = true;
     void findVideo(entry).then((b) => { if (b && alive) { u = URL.createObjectURL(b); setUrl(u); } });
-    return () => { alive = false; if (u) URL.revokeObjectURL(u); };
+    void loadPhoto(entry.id).then((b) => { if (b && alive) { p = URL.createObjectURL(b); setPhoto(p); } });
+    return () => { alive = false; if (u) URL.revokeObjectURL(u); if (p) URL.revokeObjectURL(p); };
   }, [entry]);
   const miss = getMissing(f);
   return (
     <ModalShell title={`Eintrag bearbeiten · ID ${entry.targetId || "—"}`} sub={`${entry.filename || entry.origFilename} · Änderung wird lokal + Tresor gesichert`} onClose={onClose} xwide>
       <PovForm value={f} onChange={(patch) => setF((p) => ({ ...p, ...patch }))} videoUrl={url} youtubeUrl={f.youtubeUrl} timestamps={f.timestamps}
-        acpStatus={acpStatus} onAcp={() => onAcp(f)} pool={pool} onAddPool={onAddPool}
+        acpStatus={acpStatus} onAcp={() => onAcp(f)} pool={pool} onAddPool={onAddPool} bannerPhoto={photo}
+        onRecapture={(sec) => { void findVideo(entry).then((b) => b && captureFrameAt(b, sec).then((d) => { if (d) { setPhoto(d); void savePhoto(entry.id, d); } })); }}
         onOpenPov={() => { const u = url || f.youtubeUrl; if (u) window.open(u, "_blank", "noopener"); }} />
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/10 pt-4">
         {miss.length > 0 ? <Badge tone="orange">fehlt: {miss.join(", ")}</Badge> : <Badge tone="green">vollständig</Badge>}

@@ -8,9 +8,9 @@ import {
   getVideo, putVideo, delVideo, hasVideo, findVideo,
   loadMeta, saveMeta, loadMirror, loadDeleted, markDeleted, saveRecord, loadAllRecords, deleteRecord, mergeEntries,
   loadSettings, saveSettings, loadYT, saveYT, loadDrive, saveDrive, loadUsers, saveUsers, loadSession, saveSession,
-  loadBridgeToken, loadQueueMeta, saveQueueMeta, applyCsvFilters, sortCsv, toCSV, VIEW_KEY, classifyReason, autoTypes, autoPerma, autoResult,
+  loadBridgeToken, loadQueueMeta, saveQueueMeta, applyCsvFilters, sortCsv, toCSV, VIEW_KEY, classifyReason, autoTypes, autoPerma, autoResult, savePhoto,
 } from "./lib/core";
-import { captureThumbnail, runOcrOnFile, youtubeUpload, youtubeWaitProcessing, youtubeSetTitle, driveBackup, openAcpForId, installAcpListener } from "./lib/services";
+import { captureThumbnail, captureFrameAt, runOcrOnFile, youtubeUpload, youtubeWaitProcessing, youtubeSetTitle, driveBackup, openAcpForId, installAcpListener, YtQuotaError } from "./lib/services";
 import { unlockVault, lockVault, restoreVaultKey, lockStatus, noteLoginFail, noteLoginOk, formatRemain } from "./lib/vault";
 import { Badge, Field, Toast, Toasts, btnGhost, btnPrimary, inputCls } from "./ui";
 import { ArchiveView, CasesView, DetailModal, type ArchiveFilter } from "./views/Archive";
@@ -75,6 +75,8 @@ export default function App() {
   const queueRef = useRef<QueueItem[]>([]);
   const entriesRef = useRef<PovEntry[]>([]);
   const autoBackupTimer = useRef<number | null>(null);
+  const blockedSlots = useRef<number[]>([0, 0, 0]);   // Kanal gesperrt bis (Zeitstempel)
+  const autoRunning = useRef(false);
   const bridgeToken = useMemo(() => loadBridgeToken(), []);
   useEffect(() => { queueRef.current = queue; }, [queue]);
   useEffect(() => { entriesRef.current = entries; }, [entries]);
@@ -153,6 +155,13 @@ export default function App() {
       setEditing((ed) => ed && ed.targetId === m.targetId ? { ...ed, ...patch(ed) } : ed);
     }
   }), [expanded, persist, push]);
+
+  // Nach dem Start bzw. Login offene POVs automatisch weiterverarbeiten
+  useEffect(() => {
+    if (!booted || (settings.loginRequired && !user)) return;
+    if (queue.some((q) => q.status === "wartet" && !q.ocrDone)) void runAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booted, user, queue.length]);
 
   const reloadFromDisk = useCallback(async () => {
     const meta = loadMeta(); const recs = loadAllRecords(); const mirror = await loadMirror();
@@ -252,11 +261,49 @@ export default function App() {
       try { await putVideo("q_" + qid, f, { name: f.name }); } catch { /* Quota */ }
     }
     const next = [...queueRef.current, ...items]; setQueue(next); saveQueueMeta(next);
+    queueRef.current = next;
     if (!expanded) setExpanded(items[0].qid);
-    push("info", `${items.length} Datei(en) in der Warteschlange — Ergebnis kann sofort eingetragen werden.`);
+    push("info", `${items.length} Datei(en) — Upload startet automatisch, eine nach der anderen.`);
+    void runAll();
   };
+
+  // Arbeitet die Warteschlange der Reihe nach ab (Upload → Verarbeitung → OCR → Bannscreen).
+  // Läuft immer nur EINE Pipeline gleichzeitig, damit Uploads sich nicht gegenseitig bremsen.
+  const runAll = useCallback(async () => {
+    if (autoRunning.current) return;
+    autoRunning.current = true;
+    try {
+      for (;;) {
+        const nextItem = queueRef.current.find((q) => (q.status === "wartet" || (q.status === "fehler" && !q.youtubeId)) && !q.ocrDone);
+        if (!nextItem) break;
+        if (nextItem.status === "fehler") {
+          // Nur fortsetzen, wenn wieder ein Kanal frei ist (sonst würde es endlos scheitern)
+          if (pickSlot(nextItem.ytSlot) < 0) break;
+          patchQ(nextItem.qid, { status: "wartet", error: "" });
+        }
+        setExpanded((cur) => cur || nextItem.qid);
+        const ok = await runPipeline(nextItem.qid);
+        if (!ok) {
+          const after = queueRef.current.find((q) => q.qid === nextItem.qid);
+          if (after && after.status === "fehler") break;   // echter Fehler → Automatik anhalten
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    } finally { autoRunning.current = false; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const patchQ = (qid: string, patch: Partial<QueueItem> | ((q: QueueItem) => Partial<QueueItem>)) =>
     setQueue((p) => p.map((q) => q.qid === qid ? { ...q, ...(typeof patch === "function" ? patch(q) : patch) } : q));
+
+  // Nächster Kanal mit freiem Kontingent (gesperrte Kanäle werden übersprungen)
+  const pickSlot = (preferred: number): number => {
+    const blocked = blockedSlots.current;
+    for (let i = 0; i < 3; i++) {
+      const s = (preferred + i) % 3;
+      if (ytConns[s]?.enabled !== false && !(blocked[s] > Date.now())) return s;
+    }
+    return -1;
+  };
 
   const runPipeline = async (qid: string): Promise<boolean> => {
     const item = queueRef.current.find((q) => q.qid === qid); if (!item) return false;
@@ -266,34 +313,57 @@ export default function App() {
     try {
       let videoId = item.youtubeId, url = item.youtubeUrl;
       if (!videoId) {
-        patchQ(qid, { status: "youtube-upload", error: "", progress: 0, youtubeStatus: "Upload startet…" });
-        const slot = ytConns[item.ytSlot] || ytConns[0];
         const title = buildFinalFilename({ ...item.ocr, date: item.ocr.date || dateFromFilename(item.fileName) });
-        const r = await youtubeUpload(file, title, slot.slot, slot.accessToken || "", (pr) => patchQ(qid, { progress: pr.percent, youtubeStatus: pr.status }), ctrl.signal);
-        videoId = r.videoId; url = r.url;
-        patchQ(qid, { youtubeId: videoId, youtubeUrl: url, youtubeStatus: `Upload 100 % · ${videoId}`, progress: 100, status: "youtube-wartet", processingStatus: "uploaded" });
-        const proc = await youtubeWaitProcessing(videoId, slot.accessToken || "", r.simulated, (s) => patchQ(qid, { processingStatus: s }), ctrl.signal);
-        if (proc !== "succeeded") throw new Error("YouTube-Verarbeitung fehlgeschlagen");
+        // Bei vollem Kanal automatisch den nächsten nehmen
+        let slotIdx = pickSlot(item.ytSlot);
+        let lastQuota = "";
+        for (let tries = 0; tries < 3 && slotIdx >= 0; tries++) {
+          const slot = ytConns[slotIdx];
+          patchQ(qid, { status: "youtube-upload", error: "", progress: 0, ytSlot: slotIdx, youtubeStatus: `Kanal ${slotIdx + 1} · Upload startet…` });
+          try {
+            const r = await youtubeUpload(file, title, slotIdx, slot.accessToken || "", (pr) => patchQ(qid, { progress: pr.percent, youtubeStatus: pr.status }), ctrl.signal);
+            videoId = r.videoId; url = r.url;
+            patchQ(qid, { youtubeId: videoId, youtubeUrl: url, youtubeStatus: `Upload 100 % · Kanal ${slotIdx + 1}`, progress: 100, status: "youtube-wartet", processingStatus: "uploaded" });
+            const proc = await youtubeWaitProcessing(videoId, slot.accessToken || "", r.simulated, (s) => patchQ(qid, { processingStatus: s }), ctrl.signal);
+            if (proc === "failed") throw new Error("YouTube meldet: Verarbeitung fehlgeschlagen.");
+            if (proc === "processing") push("info", `${item.fileName}: hochgeladen — YouTube verarbeitet im Hintergrund weiter. Prüfung läuft trotzdem.`);
+            break;
+          } catch (err) {
+            if (err instanceof YtQuotaError) {
+              lastQuota = err.message;
+              blockedSlots.current[slotIdx] = Date.now() + 30 * 60 * 1000;  // 30 Min sperren
+              const nextSlot = pickSlot(slotIdx + 1);
+              push("info", `${err.message} → wechsle auf Kanal ${nextSlot + 1}.`);
+              slotIdx = nextSlot;
+              continue;
+            }
+            throw err;
+          }
+        }
+        if (!videoId) throw new Error(lastQuota ? `${lastQuota} Alle Kanäle ausgelastet — POV bleibt in der Warteschlange.` : "Kein YouTube-Kanal verfügbar.");
       }
-      patchQ(qid, { status: "ocr", ocrProgress: 5, ocrResult: "Frames werden extrahiert…", processingStatus: "succeeded" });
+      patchQ(qid, { status: "ocr", ocrProgress: 5, ocrResult: "Frames werden extrahiert…" });
       const ocr = await runOcrOnFile(file, item.fileName, settings.adminId, settings.ocrFrames, settings.ocrLanguage,
-        (p) => patchQ(qid, { ocrProgress: Math.min(95, 10 + Math.round((p.frame / p.frames) * 80)), ocrResult: `[${p.variant}] ${p.text.slice(0, 160)}` }));
-      // OCR füllt nur leere Felder — Eingaben des Benutzers bleiben
+        (p) => patchQ(qid, { ocrProgress: Math.min(92, 10 + Math.round((p.frame / p.frames) * 78)), ocrResult: `[${p.variant}] ${p.text.slice(0, 160)}` }));
+      // Bannscreen als Vollbild aufnehmen
+      patchQ(qid, { ocrProgress: 95, ocrResult: "Bannscreen wird aufgenommen…" });
+      const bannerAt = ocr.timestamps.banner ?? Math.max(0.2, (item.duration || 2) - 2);
+      const photo = await captureFrameAt(file, bannerAt).catch(() => "");
       patchQ(qid, (q) => {
         const o = { ...q.ocr };
         for (const k of ["targetId", "reason", "sc", "server", "date", "discord"] as const) if (!o[k] && ocr.data[k]) (o as Record<string, unknown>)[k] = ocr.data[k];
         if (!o.proof) o.proof = url;
         o.timestamps = { ...ocr.timestamps, ...(o.timestamps || {}) };
-        return { status: "fertig", ocrProgress: 100, ocrDone: true, ocr: o, ocrResult: ocr.raw.slice(0, 1500) || "OCR abgeschlossen." };
+        return { status: "fertig", ocrProgress: 100, ocrDone: true, ocr: o, bannerPhoto: photo || q.bannerPhoto, ocrResult: ocr.raw.slice(0, 1500) || "OCR abgeschlossen." };
       });
       saveQueueMeta(queueRef.current.map((q) => q.qid === qid ? { ...q, status: "fertig", youtubeId: videoId, youtubeUrl: url } : q));
       const miss = getMissing({ ...item.ocr, ...ocr.data });
-      push(miss.length ? "info" : "ok", miss.length ? `OCR fertig — bitte prüfen: ${miss.join(", ")}.` : `OCR vollständig: ID ${ocr.data.targetId} · ${ocr.data.reason}`);
+      push(miss.length ? "info" : "ok", miss.length ? `${item.fileName}: bitte prüfen — ${miss.join(", ")}.` : `${item.fileName}: vollständig erkannt (ID ${ocr.data.targetId}).`);
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       patchQ(qid, msg.includes("abgebrochen") || msg === "aborted" ? { status: "wartet", error: "Abgebrochen.", progress: 0 } : { status: "fehler", error: msg });
-      push("err", `Pipeline (${item.fileName}): ${msg} — Datei bleibt in der Warteschlange.`);
+      push("err", `${item.fileName}: ${msg}`);
       return false;
     } finally { abortRef.current.delete(qid); }
   };
@@ -323,6 +393,7 @@ export default function App() {
       // 1) Video dauerhaft  2) Thumbnail  3) Meta  4) verifizieren  5) Queue bereinigen
       if (file) await putVideo(id, file, { name: filename });
       if (item.thumbUrl) { try { await putVideo("thumb_" + id, await (await fetch(item.thumbUrl)).blob(), { thumb: true }); } catch { /* egal */ } }
+      if (item.bannerPhoto) { try { await savePhoto(id, item.bannerPhoto); } catch { /* egal */ } }
       const nextEntries = [entry, ...entriesRef.current];
       saveMeta(nextEntries); saveRecord(entry);
       const okMeta = loadMeta().some((e) => e.id === id); const okVideo = file ? await hasVideo(id) : true;
@@ -494,7 +565,8 @@ export default function App() {
             onFiles={addFiles} onRun={(qid) => void runPipeline(qid)} onAbort={(qid) => abortRef.current.get(qid)?.abort()} onSave={(qid, n) => void saveQueueItem(qid, n)}
             onRemove={(qid) => { if (!window.confirm("POV aus der Warteschlange entfernen?")) return; abortRef.current.get(qid)?.abort(); filesRef.current.delete(qid); void delVideo("q_" + qid).catch(() => undefined); const rest = queueRef.current.filter((q) => q.qid !== qid); setQueue(rest); saveQueueMeta(rest); if (expanded === qid) setExpanded(""); }}
             onPatch={(qid, patch) => patchQ(qid, patch)} onPatchOcr={(qid, patch) => patchQ(qid, (q) => ({ ocr: { ...q.ocr, ...patch } }))}
-            onAcp={(q) => openAcp(q.ocr.targetId || "", q.qid)} getFile={getFile} />}
+            onAcp={(q) => openAcp(q.ocr.targetId || "", q.qid)} getFile={getFile}
+            onRecapture={(qid, sec) => { void getFile(qid).then((f) => f && captureFrameAt(f, sec).then((d) => { if (d) patchQ(qid, { bannerPhoto: d }); })); }} />}
           {view === "csv" && <CsvView entries={entries} filtered={csvFiltered} active={csvActive} setActive={setCsvActive} search={csvSearch} setSearch={setCsvSearch} from={csvFrom} setFrom={setCsvFrom} to={csvTo} setTo={setCsvTo} sort={csvSort} setSort={setCsvSort} onExport={exportCSV} push={push} />}
           {view === "settings" && <SettingsView settings={settings} setSettings={(s) => { setSettings(s); saveSettings(s); }} ytConns={ytConns} setYtConns={(c) => { setYtConns(c); saveYT(c); }}
             drive={drive} setDrive={(d) => { setDrive(d); saveDrive(d); }} entries={entries} setEntries={(e) => persist(e, "Daten importiert")} push={push}

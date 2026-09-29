@@ -22,6 +22,7 @@ export interface UploadProps {
   onPatchOcr: (qid: string, patch: Partial<PovEntry>) => void;
   onAcp: (q: QueueItem) => void;
   getFile: (qid: string) => Promise<File | null>;
+  onRecapture: (qid: string, sec: number) => void;
 }
 
 export default function UploadView(p: UploadProps) {
@@ -35,13 +36,13 @@ export default function UploadView(p: UploadProps) {
           className="cursor-pointer rounded-2xl border-2 border-dashed border-white/15 bg-white/[.02] p-10 text-center transition hover:border-amber-500/50 hover:bg-amber-500/5">
           <Upload size={36} className="mx-auto mb-3 text-amber-500" />
           <p className="text-lg font-black">POVs hier ablegen</p>
-          <p className="mt-1 text-xs text-slate-400">Mehrere Aufnahmen gleichzeitig auswählen · Ergebnis beim Hochladen eintragen → YouTube-Upload (unlisted) → Upload 100 % → OCR → Prüfung → finaler Dateiname</p>
+          <p className="mt-1 text-xs text-slate-400">Mehrere Aufnahmen gleichzeitig auswählen — <b className="text-amber-300">der Upload startet automatisch</b>, eine POV nach der anderen. Ist ein YouTube-Kanal voll, übernimmt der nächste.</p>
           <input ref={inputRef} type="file" accept="video/*" multiple className="hidden" onChange={(e) => { if (e.target.files) p.onFiles(e.target.files); e.target.value = ""; }} />
         </div>
         <div className="space-y-2 rounded-2xl border border-white/10 bg-[#101830] p-4 text-xs">
           <p className="font-black">Verarbeitungswarteschlange</p>
           <p className="text-slate-400"><b className="text-slate-200">{p.queue.length} Dateien</b> · „Nächste POV“ speichert den aktuellen Fall ins Archiv und öffnet den nächsten.</p>
-          {["Datei → Warteschlange", "YouTube-Upload (unlisted, Slot 1–3)", "processingStatus = succeeded abwarten", "OCR: Bannblock (Chat oben links, letzte 5 s)", "Prüfen → Speichern → Tresor-Backup"].map((s) => (
+          {["Datei → Warteschlange (Automatik startet)", "YouTube-Upload unlisted · Kanalwechsel bei vollem Limit", "Verarbeitung kurz abwarten (max. 45 s)", "OCR: Bannblock (Chat oben links, letzte 5 s)", "Bannscreen-Foto → Prüfen → Speichern"].map((s) => (
             <p key={s} className="flex items-center gap-2 text-slate-300"><CheckCircle2 size={13} className="shrink-0 text-emerald-500" /> {s}</p>
           ))}
           <p className="pt-1 text-slate-500">Aktive Pipelines: <b className="text-slate-200">{active}</b> · YouTube-Slots aktiv: <b className="text-slate-200">{p.ytConns.filter((y) => y.enabled).length}/3</b></p>
@@ -136,6 +137,7 @@ function QueueCard(props: UploadProps & { q: QueueItem; index: number; total: nu
         <div className="border-t border-white/10 p-4">
           <PovForm value={q.ocr} onChange={(patch) => props.onPatchOcr(q.qid, patch)} videoUrl={url} youtubeUrl={q.youtubeUrl}
             timestamps={q.ocr.timestamps} acpStatus={props.acpStatus[q.qid]} onAcp={() => props.onAcp(q)} pool={props.pool} onAddPool={props.onAddPool}
+            bannerPhoto={q.bannerPhoto} onRecapture={(sec) => props.onRecapture(q.qid, sec)}
             onOpenPov={() => { if (url) window.open(url, "_blank", "noopener"); }} />
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/10 pt-4">
             <button className={btnGhost} onClick={props.onToggle}>Abbrechen</button>
