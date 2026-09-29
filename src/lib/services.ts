@@ -75,8 +75,10 @@ function preprocess(canvas: HTMLCanvasElement, mode: string): HTMLCanvasElement 
   return out;
 }
 
-// Chat-Bereich oben links (dort steht der Bannblock „Adam Byers [15340] hat … [ID] für …“), 2× vergrößert
-function cropChat(canvas: HTMLCanvasElement, wFrac = 0.55, hFrac = 0.6): HTMLCanvasElement {
+// Chat-Bereich oben links (dort steht der Bannblock), 2× vergrößert.
+// Bewusst schmal/kurz: die Spielerliste rechts und der untere Chat enthalten fremde
+// Spieler-IDs, die sonst fälschlich als Ziel-ID erkannt werden.
+function cropChat(canvas: HTMLCanvasElement, wFrac = 0.5, hFrac = 0.45): HTMLCanvasElement {
   const out = document.createElement("canvas");
   out.width = Math.round(canvas.width * wFrac);
   out.height = Math.round(canvas.height * hFrac);
@@ -101,22 +103,36 @@ function cropChat(canvas: HTMLCanvasElement, wFrac = 0.55, hFrac = 0.6): HTMLCan
 //   [A] IP: 46.88.96.195 ▢ SC: c3e3850991ad3a4fde764aa5a338545c95a68633
 //   [A] Adam Byers[15340] ▢ hat die Social Club ID <hash> gebannt. Grund: Cheats
 // Zwischen „]“ und „für“ steht ein OCR-Artefakt (Kästchen) → beliebige Zeichen zulassen.
+// Ziel-ID per Punktesystem statt „erster/letzter Treffer“.
+// Im Chat stehen viele fremde IDs (Anfragen, Teleports, Admin-Chat, eigene Eingaben),
+// deshalb gewinnt die ID mit dem stärksten Bannblock-Bezug bzw. der höchsten Häufigkeit.
+function pickTargetId(t: string, banned: Set<string>): string {
+  const score = new Map<string, number>();
+  const add = (id: string, s: number) => {
+    if (!/^\d{1,6}$/.test(id)) return;
+    if (banned.has(id) || banned.has(id.replace(/^0+/, ""))) return;   // eigene Admin-ID nie
+    score.set(id, (score.get(id) || 0) + s);
+  };
+  // 1) „[ID] ▢ für 60 Tage gebannt“ — der eigentliche Bannblock
+  for (const m of t.matchAll(/\[\s*(\d{1,6})\s*\][^[\]]{0,30}?f[üu]r\s*\d{1,4}\s*(?:Tage?n?|Stunden?|Minuten?)/gi)) add(m[1], 120);
+  // 2) „Administrator …[Admin] hat <Name>[ID]“
+  for (const m of t.matchAll(/Administrator[^[\]]{0,60}\[\s*\d{1,6}\s*\][^[\]]{0,40}?hat\s+[^[\]]{0,50}\[\s*(\d{1,6})\s*\]/gi)) add(m[1], 100);
+  // 3) irgendein „hat …[ID] … gebannt“ (nicht der Social-Club-Bann)
+  for (const m of t.matchAll(/hat\s+(?!die\s+social)[^[\]]{0,60}\[\s*(\d{1,6})\s*\][^[\]]{0,45}?gebannt/gi)) add(m[1], 80);
+  // 4) Häufigkeit: der geprüfte Spieler taucht im Chat mehrfach auf
+  for (const m of t.matchAll(/\[\s*(\d{1,6})\s*\]/g)) add(m[1], 6);
+  if (!score.size) return "";
+  return [...score.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)[0][0];
+}
+
 export function parseOcrText(text: string, adminId: string): Partial<PovEntry> {
   const t = ` ${text.replace(/\s+/g, " ")} `;
   const out: Partial<PovEntry> = {};
   const banned = new Set([adminId, BAN_ADMIN_ID].filter(Boolean));
-  const idOk = (id: string) => /^\d{1,6}$/.test(id) && !banned.has(id) && !banned.has(id.replace(/^0+/, ""));
 
-  // 1) Bannblock: „hat <Name>[ID] … für N Tage gebannt. Grund: <Grund>“
-  let m = t.match(/hat\s+(?!die\s+social)[^[\]]{0,60}\[\s*(\d{1,6})\s*\][^[\]]{0,20}?f[üu]r\s*\d{0,4}\s*(?:Tage?|Stunden?|Minuten?)?\s*gebannt/i);
-  if (!m) m = t.match(/hat\s+(?!die\s+social)[^[\]]{0,60}\[\s*(\d{1,6})\s*\][^[\]]{0,20}?f[üu]r/i);
-  if (m && idOk(m[1])) out.targetId = m[1];
-  // 2) Fallback: letzte [ID] in eckigen Klammern (Ziel steht nach dem Admin)
-  if (!out.targetId) {
-    const rx = /\[\s*(\d{1,6})\s*\]/g; let mm: RegExpExecArray | null; const c: string[] = [];
-    while ((mm = rx.exec(t)) !== null) if (idOk(mm[1])) c.push(mm[1]);
-    if (c.length) out.targetId = c[c.length - 1];
-  }
+  const tid = pickTargetId(t, banned);
+  if (tid) out.targetId = tid;
+  let m: RegExpMatchArray | null;
   // 3) Grund: bevorzugt direkt hinter „gebannt. Grund:“ des Spieler-Banns.
   //    Der Social-Club-Bann („Grund: Cheats“) wird dabei übersprungen.
   let reason = "";

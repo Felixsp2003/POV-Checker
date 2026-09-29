@@ -320,6 +320,12 @@ export default function App() {
         patchQ(qid, (q) => {
           const o = { ...q.ocr };
           for (const k of ["targetId", "reason", "sc", "server", "date", "discord"] as const) if (!o[k] && ocr.data[k]) (o as Record<string, unknown>)[k] = ocr.data[k];
+          // Auto-Regeln auch bei OCR anwenden: Bann-Typen, Perma-Bann und Ergebnis
+          if (o.reason) {
+            if (!o.types?.length) o.types = autoTypes(o.reason);
+            const ap = autoPerma(o.reason); if (ap !== undefined && !o.perma) o.perma = ap;
+            if (!o.manualResult) o.manualResult = autoResult(o.reason);
+          }
           o.timestamps = { ...ocr.timestamps, ...(o.timestamps || {}) };
           return { ocrProgress: 100, ocrDone: true, ocr: o, bannerPhoto: photo || q.bannerPhoto, ocrResult: ocr.raw.slice(0, 1500) || "Analyse abgeschlossen." };
         });

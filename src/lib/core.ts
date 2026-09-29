@@ -8,7 +8,7 @@
 // ============================================================
 import { normalizeEntry, parseMetaContainer, serializeMeta, legacyCount } from "./legacy";
 
-export const APP_VERSION = "V150";
+export const APP_VERSION = "V151";
 export const VIEW_KEY = "grandrp_view_v42";
 export const META_KEY = "grandrp_pov_meta_v42";
 export const DB_NAME = "grandrp_pov_db_v42";
@@ -230,6 +230,8 @@ export function autoTypes(reason: string): string[] {
   const t: string[] = [];
   if (/pc[ -]?check|event 1\.7/.test(r)) t.push("pccheck");
   if (/verweiger/.test(r)) t.push("verweigert");
+  // Verweigerung + Trolling gilt als Cheater-Fall (Perma), nicht als reine Verweigerung
+  if (/troll/.test(r)) t.push("cheater");
   if (/positiv|cheat|banevading/.test(r) && !/verweiger/.test(r)) t.push("cheater");
   if (r === "cheater" || /acc 1\.4 \(twink\)/.test(r)) t.push("hardban");
   return [...new Set(t)];
