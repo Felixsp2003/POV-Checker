@@ -11,8 +11,16 @@ Verbindet das Grand RP Admin Panel mit dem DC Checker.
    (z. B. `"https://meine-domain.de/*"`), dann die Erweiterung neu laden.
 
 ## Ablauf
-DC Checker → „ACP/SC“ klicken → ACP-Tab öffnet sich (mit `dc_id` + `dc_bridge`) → Extension liest den SocialClub →
-sendet ihn mit Token zurück → der DC Checker trägt ihn ein.
+DC Checker → „SC aus ACP holen“ → ACP-Tab öffnet sich (mit `dc_id` + `dc_bridge`) →
+Extension liest SocialClub und BannGrund → sendet beides mit Token zurück → Tab schließt sich.
+
+## Stört die normale Adminarbeit nicht
+Die Extension ist **nur in dem einen Tab aktiv**, der aus dem DC Checker geöffnet wurde.
+Der Token liegt in `sessionStorage` und gilt damit ausschließlich für diesen Tab.
+Dieser Tab trägt im Titel ein `🔎 DC ·`.
+
+In allen anderen ACP-Tabs passiert **nichts**: kein Info-Fenster, kein Button, kein automatisches
+Schließen, kein Auslesen. Du kannst das Adminpanel dort ganz normal benutzen.
 
 ## Sicherheit
-Nachrichten ohne gültigen `bridgeToken` (Einstellungen → ACP / Extension) werden von der App verworfen.
+Nachrichten ohne gültigen `bridgeToken` (Einstellungen → ACP) werden von der App verworfen.

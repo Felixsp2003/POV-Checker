@@ -316,6 +316,11 @@ function AcpTab({ bridgeToken, push }: { bridgeToken: string; push: Push }) {
         </div>
       )}
 
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-emerald-100">
+        <p className="font-bold">Deine normale Adminarbeit bleibt unberührt.</p>
+        <p className="mt-1 text-slate-300">Die Extension ist <b>nur in dem einen ACP-Tab aktiv</b>, den der Checker öffnet — erkennbar am Titel <span className="font-mono">🔎 DC ·</span>. In allen anderen ACP-Tabs erscheint kein Fenster, kein Button, und es wird nichts gelesen oder geschlossen.</p>
+      </div>
+
       <div className="space-y-2 rounded-xl border border-white/10 bg-black/30 p-4">
         <p className="text-sm font-black">Weg 1 · Extension (automatisch)</p>
         <ol className="list-decimal space-y-1 pl-4 text-xs text-slate-300">

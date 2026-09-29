@@ -1,8 +1,16 @@
 // content.js — läuft auf admin.gta5grand.com
-// Stufe 1  /logs/authorization?characterid=<ID>  → SocialClub-Hash (40 hex)
-// Stufe 2  /character/info/<ID>                  → roter Kasten „Reason: …“ + SocialClub-Name/ID
+// NUR aktiv in dem Tab, der aus dem DC Checker geöffnet wurde (Token in sessionStorage).
+// In allen anderen ACP-Tabs passiert nichts: kein Fenster, kein Button, kein Auto-Schließen.
+// Stufe 1  /logs/authorization?characterid=<ID>  → SocialClub-Hash
+// Stufe 2  /character/info/<ID>                  → roter Kasten „Reason: …“
 (function () {
   "use strict";
+
+  // Nur oberstes Dokument, nicht in eingebetteten Rahmen
+  if (window.top !== window.self) return;
+  // Kein Token = normaler Admin-Tab → sofort und vollständig aussteigen
+  if (!(window.__DC_ACTIVE && window.__DC_ACTIVE())) return;
+
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const REASONS = ["PC-Check Verweigerung - Trolling", "PC-Check Verweigerung", "PC-Check Positiv 4.1 (Discord)",
@@ -127,10 +135,11 @@
   }
 
   function boot() {
+    // Tab-Titel kennzeichnen, damit der Checker-Tab vom Arbeits-Tab unterscheidbar ist
+    try { if (document.title.indexOf("🔎 DC") !== 0) document.title = "🔎 DC · " + document.title; } catch (e) { /* egal */ }
     addButton();
-    if (!token()) { panel("Bereit. Dieses Tab wurde nicht aus dem DC Checker geöffnet — es wird nichts automatisch gesendet.", "info"); return; }
     if (isInfo) void runInfo(); else if (isAuth) void runAuth();
-    else panel("Bereit. Öffne die Authorization-Logs oder eine Character-Info.", "info");
+    else panel("Checker-Tab bereit. Öffne die Authorization-Logs oder eine Character-Info.", "info");
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
   setTimeout(addButton, 2000);
