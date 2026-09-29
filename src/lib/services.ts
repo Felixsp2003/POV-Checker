@@ -406,7 +406,7 @@ export function downloadLocalBackup(): void {
 
 // ---------------- Google OAuth (GIS, kostenlos) ----------------
 
-declare global { interface Window { google?: { accounts: { oauth2: { initTokenClient: (c: Record<string, unknown>) => { requestAccessToken: () => void } } } } } }
+declare global { interface Window { google?: { accounts: { oauth2: { initTokenClient: (c: Record<string, unknown>) => { requestAccessToken: (opts?: Record<string, unknown>) => void } } } } } }
 
 export function loadGIS(): Promise<void> {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
@@ -419,16 +419,28 @@ export function loadGIS(): Promise<void> {
   });
 }
 
+// YouTube und Drive dürfen NICHT in einem Request stehen (Google Error 400 invalid_request).
+// include_granted_scopes muss false sein, sonst hängt GIS zuvor erteilte Scopes (Drive + YouTube) zusammen.
+export const YT_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"];
+export const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"];
+
 export async function googleConnect(clientId: string, scopes: string[]): Promise<{ token: string; expiry: number }> {
   await loadGIS();
   if (!window.google) throw new Error("Google Identity Services nicht verfügbar");
+  const unique = [...new Set(scopes.filter(Boolean))];
+  if (unique.length === 0) throw new Error("Keine OAuth-Berechtigung angegeben.");
+  const hasYt = unique.some((s) => s.includes("/auth/youtube"));
+  const hasDrive = unique.some((s) => s.includes("/auth/drive"));
+  if (hasYt && hasDrive) throw new Error("YouTube und Drive müssen getrennt verbunden werden.");
   return new Promise((resolve, reject) => {
     try {
       const client = window.google!.accounts.oauth2.initTokenClient({
         client_id: clientId,
-        scope: scopes.join(" "),
-        callback: (resp: { access_token?: string; expires_in?: number; error?: string }) => {
-          if (resp.error || !resp.access_token) reject(new Error(resp.error || "OAuth abgebrochen"));
+        scope: unique.join(" "),
+        include_granted_scopes: false,
+        prompt: "consent",
+        callback: (resp: { access_token?: string; expires_in?: number; error?: string; error_description?: string }) => {
+          if (resp.error || !resp.access_token) reject(new Error(resp.error_description || resp.error || "OAuth abgebrochen"));
           else resolve({ token: resp.access_token, expiry: Date.now() + (resp.expires_in || 3600) * 1000 });
         },
       });

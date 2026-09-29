@@ -4,7 +4,7 @@ import {
   APP_VERSION, AppSettings, DB_NAME, DriveConfig, META_KEY, PC_CHECKER_LEAD, PC_CHECKER_POOL, PovEntry, SERVERS, STORE, YTConnection,
   adoptYtConnections, loadAllRecords, loadCustomCheckers, loadDeleted, loadMeta, loadUsers, mergeEntries, metaDiagnostics, saveCustomCheckers, saveDeleted, saveUsers, serverLabel, sha256, uid,
 } from "../lib/core";
-import { downloadExtension, downloadLocalBackup, driveBackup, driveRestore, googleConnect } from "../lib/services";
+import { downloadExtension, downloadLocalBackup, driveBackup, driveRestore, googleConnect, YT_SCOPES, DRIVE_SCOPES } from "../lib/services";
 import { downloadEncryptedVault, importEncryptedFile } from "../lib/vault";
 import { Badge, CodeBox, Field, Mini, Push, btnDanger, btnGhost, btnPrimary, inputCls } from "../ui";
 import { PwForm } from "./Modals";
@@ -35,7 +35,7 @@ export default function SettingsView(props: SettingsProps) {
     if (!cid) { push("err", "Bitte zuerst Google Client-ID eintragen (kostenlos in der Google Cloud Console)."); return; }
     setBusy("yt" + slot);
     try {
-      const { token, expiry } = await googleConnect(cid, ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube"]);
+      const { token, expiry } = await googleConnect(cid, YT_SCOPES);
       patchYt(slot, { accessToken: token, expiry });
       push("ok", `YouTube-Verbindung ${slot + 1} verbunden. Uploads laufen als unlisted.`);
     } catch (e) { push("err", `YouTube-Login fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`); }
@@ -46,7 +46,7 @@ export default function SettingsView(props: SettingsProps) {
     if (!cid) { push("err", "Bitte zuerst Google Client-ID eintragen."); return; }
     setBusy("drive");
     try {
-      const { token, expiry } = await googleConnect(cid, ["https://www.googleapis.com/auth/drive.file"]);
+      const { token, expiry } = await googleConnect(cid, DRIVE_SCOPES);
       setDrive({ ...drive, connected: true, accessToken: token, expiry, clientId: cid });
       push("ok", "Google Drive verbunden — verschlüsselte Backups laufen automatisch nach jeder Änderung.");
     } catch (e) { push("err", `Drive-Login fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`); }
@@ -144,7 +144,7 @@ export default function SettingsView(props: SettingsProps) {
         {tab === "youtube" && (
           <div className="space-y-4">
             <h3 className="font-black">YouTube-Verbindungen · 3 Slots</h3>
-            <p className="text-xs text-slate-400">Ist eine Verbindung wegen Uploadlimit/Quota voll, wird die nächste verwendet. Client-IDs der alten App werden automatisch übernommen. Uploads: unlisted · Titel = finaler Dateiname.</p>
+            <p className="text-xs text-slate-400">Ist eine Verbindung wegen Uploadlimit/Quota voll, wird die nächste verwendet. Client-IDs der alten App werden automatisch übernommen. Uploads: unlisted · Titel = finaler Dateiname. YouTube und Drive getrennt verbinden — Google erlaubt beide Berechtigungen nicht in einem Login.</p>
             {ytConns.map((y) => (
               <div key={y.slot} className="rounded-xl border border-white/10 bg-black/30 p-4">
                 <div className="mb-3 flex items-center gap-2">
@@ -167,7 +167,7 @@ export default function SettingsView(props: SettingsProps) {
         {tab === "drive" && (
           <div className="max-w-2xl space-y-4">
             <h3 className="font-black">Tresor · anderer PC · AES-256</h3>
-            <p className="text-xs text-slate-400">Dauerhaft und auf einem anderen PC sind die Daten über den verschlüsselten Tresor (Google Drive und/oder geheimes GitHub-Gist). Google/GitHub sehen nur Ciphertext. Schlüssel = dein Login-Passwort.</p>
+            <p className="text-xs text-slate-400">Dauerhaft und auf einem anderen PC sind die Daten über den verschlüsselten Tresor (Google Drive und/oder geheimes GitHub-Gist). Google/GitHub sehen nur Ciphertext. Schlüssel = dein Login-Passwort. Drive-Login fragt nur Drive an, nie YouTube — sonst Error 400.</p>
             <div className="flex flex-wrap items-center gap-2">
               {drive.connected ? <Badge tone="green"><CloudUpload size={12} /> Drive verbunden</Badge> : <Badge tone="zinc">Drive offen</Badge>}
               {drive.gistId ? <Badge tone="green">Gist {drive.gistId.slice(0, 8)}…</Badge> : <Badge tone="zinc">Gist offen</Badge>}
