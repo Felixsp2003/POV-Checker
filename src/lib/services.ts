@@ -451,31 +451,75 @@ export async function googleConnect(clientId: string, scopes: string[]): Promise
 
 // ---------------- ACP / Extension Bridge ----------------
 
-// WICHTIG: KEIN "noopener" — sonst ist window.opener null und die Extension/der ACP-Tab
-// kann nichts an den Checker zurücksenden. Fenster bekommt einen festen Namen (Tab wird wiederverwendet),
-// der Inhalt wird ausschließlich über den bridgeToken akzeptiert.
-export function openAcpForId(targetId: string): Window | null {
-  const token = loadBridgeToken();
-  const url = `${ACP_BASE}/de/3/logs/authorization?dc_id=${encodeURIComponent(targetId)}&dc_bridge=${encodeURIComponent(token)}`;
-  return window.open(url, "dc-acp-bridge");
+// Authorization-Logs: SocialClub-Hash (40 hex) — Filter läuft über "characterid"
+export function acpAuthUrl(targetId: string, server = "3"): string {
+  const t = loadBridgeToken();
+  return `${ACP_BASE}/de/${server}/logs/authorization?nick=&characterid=${encodeURIComponent(targetId)}`
+    + `&ip=&socialname=&socialid=&date=&subdate=&dc_id=${encodeURIComponent(targetId)}&dc_bridge=${encodeURIComponent(t)}`;
+}
+// Character-Info: roter Kasten mit „Reason: …“ + SocialClub-Name/ID
+export function acpInfoUrl(targetId: string, server = "3"): string {
+  const t = loadBridgeToken();
+  return `${ACP_BASE}/de/${server}/character/info/${encodeURIComponent(targetId)}`
+    + `?dc_id=${encodeURIComponent(targetId)}&dc_bridge=${encodeURIComponent(t)}&dc_stage=info`;
 }
 
-export function openAcpSocialClub(sc: string, server = "3"): Window | null {
-  const token = loadBridgeToken();
-  const url = `${ACP_BASE}/de/${server}/logs/socialclub?dc_sc=${encodeURIComponent(sc)}&dc_bridge=${encodeURIComponent(token)}`;
-  return window.open(url, "dc-acp-bridge");
+// WICHTIG: KEIN "noopener" — sonst ist window.opener im ACP-Tab null und die
+// direkte Rückmeldung (Extension ODER Lesezeichen) kann nichts zurücksenden.
+let acpWin: Window | null = null;
+function openAcp(url: string): Window | null {
+  try { if (acpWin && !acpWin.closed) acpWin.close(); } catch { /* egal */ }
+  acpWin = window.open(url, "grandrp_acp");   // benannt + mit opener
+  if (!acpWin) return null;
+  try { acpWin.focus(); } catch { /* egal */ }
+  return acpWin;
+}
+// Zweistufig: erst Authorization (SC), danach springt die Extension selbst zur
+// Character-Info und liest dort den BannGrund (kein zweites Pop-up nötig).
+export function openAcpForId(targetId: string, server = "3"): Window | null {
+  return openAcp(acpAuthUrl(targetId, server));
+}
+export function openAcpInfo(targetId: string, server = "3"): Window | null {
+  return openAcp(acpInfoUrl(targetId, server));
+}
+
+// Lesezeichen-Variante: funktioniert OHNE Extension. Erkennt selbst, ob die Seite
+// SocialClub (Authorization-Logs) oder BannGrund (Character-Info) zeigt.
+export function bridgeBookmarklet(): string {
+  const t = loadBridgeToken();
+  const code = `(function(){try{var T=${JSON.stringify(t)};var b=(document.body&&document.body.innerText)||"";` +
+    `var id="";try{id=new URL(location.href).searchParams.get("dc_id")||"";}catch(e){}` +
+    `if(!id){var p=location.pathname.match(/\\/character\\/info\\/(\\d+)/);if(p)id=p[1];}` +
+    `var r=b.match(/Reason\\s*:\\s*([^\\n\\r]+)/i);var m=b.match(/\\b([a-f0-9]{40})\\b/i)||b.match(/\\b([a-f0-9]{32})\\b/i);var msg=null,info="";` +
+    `if(m){msg={source:"GRANDRP_ACP_BRIDGE",bridgeToken:T,type:"SC_RESULT",targetId:id,sc:m[1],reason:r?r[1].trim():""};info="SC "+m[1];}` +
+    `else if(r){msg={source:"GRANDRP_ACP_BRIDGE",bridgeToken:T,type:"REASON_RESULT",targetId:id,reason:r[1].trim(),rawReason:r[1].trim()};info="Grund "+r[1].trim();}` +
+    `else{var v=window.prompt("Nichts gefunden - SocialClub oder Grund einfuegen:","");if(!v)return;` +
+    `msg=/^[a-f0-9]{32,40}$/i.test(v)?{source:"GRANDRP_ACP_BRIDGE",bridgeToken:T,type:"SC_RESULT",targetId:id,sc:v}:{source:"GRANDRP_ACP_BRIDGE",bridgeToken:T,type:"REASON_RESULT",targetId:id,reason:v,rawReason:v};info=v;}` +
+    `var ok=false;try{if(window.opener&&!window.opener.closed){window.opener.postMessage(msg,"*");ok=true;}}catch(e){}` +
+    `if(!ok){try{navigator.clipboard.writeText(info);}catch(e){}}` +
+    `alert(ok?("An DC Checker gesendet:\\n"+info):("Kein Checker-Tab gefunden.\\nKopiert:\\n"+info));}catch(e){alert("Fehler: "+e.message);}})()`;
+  return "javascript:" + encodeURIComponent(code);
 }
 
 export type AcpMessage =
   | { source: "GRANDRP_ACP_BRIDGE"; bridgeToken: string; type: "SC_RESULT"; targetId: string; sc: string; nickname?: string; reason?: string }
-  | { source: "GRANDRP_ACP_BRIDGE"; bridgeToken: string; type: "SC_CHECK_RESULT"; sc: string; nickname: string; charId: string; logins: number; socban: boolean; ban: boolean; server: string }
+  | { source: "GRANDRP_ACP_BRIDGE"; bridgeToken: string; type: "REASON_RESULT"; targetId: string; reason: string; rawReason: string; admin?: string; banDate?: string; socialName?: string; socialId?: string }
   | { source: "GRANDRP_ACP_BRIDGE"; bridgeToken: string; type: "PING" };
+
+export interface BridgeDiag { ext: boolean; extVersion: string; lastAt: number; lastMsg: string; rejected: number; }
+const diag: BridgeDiag = { ext: false, extVersion: "", lastAt: 0, lastMsg: "", rejected: 0 };
+export function bridgeDiag(): BridgeDiag { return { ...diag }; }
 
 export function installAcpListener(onMsg: (m: AcpMessage) => void): () => void {
   const handler = (ev: MessageEvent) => {
-    const d = ev.data as Partial<AcpMessage>;
-    if (!d || d.source !== "GRANDRP_ACP_BRIDGE") return;
-    if (d.bridgeToken !== loadBridgeToken()) return; // fremde Nachrichten ablehnen
+    const d = ev.data as Omit<Partial<AcpMessage>, "source"> & { source?: string; version?: string };
+    if (!d || typeof d !== "object") return;
+    // Anwesenheitsmeldung der Extension (ohne Daten, daher ohne Token)
+    if (d.source === "GRANDRP_ACP_BRIDGE_PRESENT") { diag.ext = true; diag.extVersion = String(d.version || ""); return; }
+    if (d.source !== "GRANDRP_ACP_BRIDGE") return;
+    if (d.bridgeToken !== loadBridgeToken()) { diag.rejected++; return; } // fremde Nachricht ablehnen
+    diag.lastAt = Date.now();
+    diag.lastMsg = JSON.stringify(d).slice(0, 200);
     onMsg(d as AcpMessage);
   };
   window.addEventListener("message", handler);
@@ -493,10 +537,7 @@ export function extensionFiles(bridgeToken: string): Record<string, string> {
     permissions: ["tabs", "storage", "scripting"],
     host_permissions: ["https://admin.gta5grand.com/*"],
     background: { service_worker: "background.js" },
-    content_scripts: [
-      { matches: ["https://admin.gta5grand.com/de/*"], js: ["website-bridge.js", "content.js"], run_at: "document_idle" },
-      { matches: ["https://*.github.io/*", "http://localhost/*", "http://127.0.0.1/*"], js: ["dc-receiver.js"], run_at: "document_start" },
-    ],
+    content_scripts: [{ matches: ["https://admin.gta5grand.com/de/*"], js: ["website-bridge.js", "content.js"], run_at: "document_idle" }],
   }, null, 2);
 
   const background = `// GrandRP ACP Bridge — background.js (MV3)\nconst BRIDGE = "GRANDRP_ACP_BRIDGE";\nchrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {\n  if (!msg || msg.source !== BRIDGE) return false;\n  // an alle DC-Checker-Tabs weiterleiten\n  chrome.tabs.query({}, (tabs) => {\n    for (const t of tabs) {\n      if (t.id && sender.tab && t.id !== sender.tab.id) {\n        chrome.tabs.sendMessage(t.id, msg).catch(() => {});\n      }\n    }\n  });\n  sendResponse({ ok: true });\n  return true;\n});\n`;
@@ -507,12 +548,9 @@ export function extensionFiles(bridgeToken: string): Record<string, string> {
 
   const readme = `# GrandRP ACP Bridge — Installation\n\n1. Ordner \`acp-extension\` erstellen und alle 5 Dateien hineinlegen.\n2. Chrome/Edge: \`chrome://extensions\` → Entwicklermodus → „Entpackte Erweiterung laden“.\n3. Grand RP Admin Panel öffnen: https://admin.gta5grand.com/\n4. Im DC Checker: Bridge-Token (Einstellungen) = \`${bridgeToken.slice(0, 12)}…\` — wird automatisch per URL übergeben.\n5. Aus dem DC Checker „SC auslesen“ klicken → ACP-Tab öffnet sich → SC wird automatisch übernommen.\n\nKostenlos, keine Server, Token-geschützt (bridgeToken).\n`;
 
-  const receiver = `// dc-receiver.js — läuft auf der DC-Checker-Seite (GitHub Pages / localhost)\\n// und reicht Nachrichten der Extension per window.postMessage an die App weiter.\\n// Die App verwirft alles ohne gültigen bridgeToken.\\n(function () {\\n  const BRIDGE = "GRANDRP_ACP_BRIDGE";\\n  chrome.runtime.onMessage.addListener(function (msg) {\\n    if (!msg || msg.source !== BRIDGE || !msg.bridgeToken) return;\\n    window.postMessage(msg, window.location.origin);\\n  });\\n})();\\n`;
-
   return {
     "manifest.json": manifest,
     "background.js": background,
-    "dc-receiver.js": receiver,
     "website-bridge.js": bridge,
     "content.js": content,
     "README.md": readme,

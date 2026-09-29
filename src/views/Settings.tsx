@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CloudDownload, CloudUpload, Copy, Download, ExternalLink, HardDrive, KeyRound, Plus, PlugZap, Trash2, Upload, User, Users, Video, Zap } from "lucide-react";
 import {
   APP_VERSION, AppSettings, DB_NAME, DriveConfig, META_KEY, PC_CHECKER_LEAD, PC_CHECKER_POOL, PovEntry, SERVERS, STORE, YTConnection,
   adoptYtConnections, loadAllRecords, loadCustomCheckers, loadDeleted, loadMeta, loadUsers, mergeEntries, metaDiagnostics, saveCustomCheckers, saveDeleted, saveUsers, serverLabel, sha256, uid,
 } from "../lib/core";
-import { downloadExtension, downloadLocalBackup, driveBackup, driveRestore, googleConnect, openAcpForId, YT_SCOPES, DRIVE_SCOPES } from "../lib/services";
+import { downloadExtension, downloadLocalBackup, driveBackup, driveRestore, googleConnect, YT_SCOPES, DRIVE_SCOPES, bridgeDiag, bridgeBookmarklet, openAcpForId } from "../lib/services";
 import { downloadEncryptedVault, importEncryptedFile } from "../lib/vault";
 import { Badge, CodeBox, Field, Mini, Push, btnDanger, btnGhost, btnPrimary, inputCls } from "../ui";
 import { PwForm } from "./Modals";
@@ -211,31 +211,7 @@ export default function SettingsView(props: SettingsProps) {
           </div>
         )}
 
-        {tab === "acp" && (
-          <div className="max-w-2xl space-y-4">
-            <h3 className="font-black">ACP / Browser-Extension</h3>
-            <p className="text-xs text-slate-400">Für SC und BannGrund wird Chrome mit dem Grand-RP-Adminpanel verwendet. Die Erweiterung läuft auf <span className="font-mono text-slate-200">https://admin.gta5grand.com/de/*</span>, wartet auf die geladenen Daten (SC bis 30 s) und sendet Social Club token-geschützt zurück.</p>
-            <Field label="Bridge-Token (Nachrichten ohne Token werden abgelehnt)">
-              <div className="flex gap-2">
-                <input className={`${inputCls} font-mono`} readOnly value={props.bridgeToken} />
-                <button className={btnGhost} onClick={() => { void navigator.clipboard.writeText(props.bridgeToken).catch(() => undefined); push("ok", "Bridge-Token kopiert."); }}><Copy size={15} /></button>
-              </div>
-            </Field>
-            <div className="flex flex-wrap gap-2">
-              <button className={btnPrimary} onClick={() => { void downloadExtension(); push("ok", "Extension-Dateien werden heruntergeladen."); }}><Download size={15} /> Extension herunterladen</button>
-              <button className={btnGhost} onClick={() => window.open("https://admin.gta5grand.com/", "_blank", "noopener")}><ExternalLink size={15} /> ACP öffnen</button>
-              <button className={btnGhost} onClick={() => {
-                const last = (window as unknown as { __DC_LAST_SC?: unknown }).__DC_LAST_SC;
-                if (last) { push("ok", `Bridge aktiv — letzte Nachricht: ${JSON.stringify(last).slice(0, 180)}`); return; }
-                push("info", "Öffne jetzt das ACP mit Bridge-Token. Extension installiert? → SC wird gesendet. Ohne Extension: SC im ACP ablesen und in das Feld „SOC / SC“ einfügen.");
-                openAcpForId("__bridge_test__");
-              }}><Zap size={15} /> Bridge testen (ACP öffnen)</button>
-              <button className={btnGhost} onClick={() => {
-                push("info", "Funktioniert der automatische Transfer nicht, kopiere den SC-Wert aus dem ACP (40-stellig) und füge ihn im Formular in „SOC / SC aus Adminpanel“ ein.");
-              }}><Copy size={15} /> Anleitung: SC manuell</button>
-            </div>
-          </div>
-        )}
+{tab === "acp" && <AcpTab bridgeToken={props.bridgeToken} push={push} />}
 
         {tab === "daten" && (
           <div className="max-w-2xl space-y-4">
@@ -307,6 +283,80 @@ export default function SettingsView(props: SettingsProps) {
         )}
 
         {tab === "info" && <ManualText />}
+      </div>
+    </div>
+  );
+}
+
+function AcpTab({ bridgeToken, push }: { bridgeToken: string; push: Push }) {
+  const [diag, setDiag] = useState(() => bridgeDiag());
+  useEffect(() => { const t = setInterval(() => setDiag(bridgeDiag()), 1000); return () => clearInterval(t); }, []);
+  const [testId, setTestId] = useState("");
+  const mark = bridgeBookmarklet();
+  const ok = diag.lastAt > 0;
+  return (
+    <div className="max-w-2xl space-y-4">
+      <h3 className="font-black">ACP-Verbindung (SocialClub &amp; BannGrund)</h3>
+
+      <div className="grid gap-2 sm:grid-cols-3">
+        <Mini label="Extension erkannt" value={diag.ext ? `ja · v${diag.extVersion || "?"}` : "nein"} warn={!diag.ext} />
+        <Mini label="Letzte Nachricht" value={ok ? new Date(diag.lastAt).toLocaleTimeString("de-DE") : "keine"} warn={!ok} />
+        <Mini label="Abgelehnt (falscher Token)" value={String(diag.rejected)} warn={diag.rejected > 0} />
+      </div>
+
+      {!diag.ext && (
+        <div className="rounded-xl border border-orange-500/40 bg-orange-500/10 p-3 text-xs text-orange-100">
+          <p className="font-bold">Extension antwortet nicht.</p>
+          <p className="mt-1">Häufigste Ursachen: nicht installiert · nach dem Update nicht neu geladen · dieses Fenster vor der Installation geöffnet. Nutze solange das <b>Lesezeichen</b> weiter unten — das braucht keine Extension.</p>
+        </div>
+      )}
+      {diag.rejected > 0 && (
+        <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-100">
+          <b>{diag.rejected} Nachricht(en) mit falschem Token abgelehnt.</b> Das ACP-Tab stammt aus einer älteren Sitzung. Tab schließen und erneut über „SC aus ACP holen“ öffnen.
+        </div>
+      )}
+
+      <div className="space-y-2 rounded-xl border border-white/10 bg-black/30 p-4">
+        <p className="text-sm font-black">Weg 1 · Extension (automatisch)</p>
+        <ol className="list-decimal space-y-1 pl-4 text-xs text-slate-300">
+          <li>Dateien holen und in einen Ordner legen: <button className={btnGhost + " !px-2 !py-0.5 !text-[11px]"} onClick={() => { void downloadExtension(); push("info", "6 Dateien werden geladen — alle in denselben Ordner legen."); }}><Download size={12} /> Extension herunterladen</button></li>
+          <li><span className="font-mono">chrome://extensions</span> öffnen → <b>Entwicklermodus</b> an → <b>Entpackte Erweiterung laden</b> → Ordner wählen.</li>
+          <li>Nach jedem Update: bei der Erweiterung auf <b>↻ Neu laden</b> klicken, danach diese Seite mit <b>Strg+Shift+R</b> neu laden.</li>
+          <li>ACP <b>nur</b> über „SC aus ACP holen“ öffnen — nur so kennt das Tab den Token.</li>
+        </ol>
+      </div>
+
+      <div className="space-y-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+        <p className="text-sm font-black text-emerald-200">Weg 2 · Lesezeichen (ohne Extension, funktioniert sofort)</p>
+        <p className="text-xs text-slate-300">Den Button in die Lesezeichenleiste ziehen (Strg+Umschalt+B blendet sie ein). Dann im ACP-Tab anklicken — SocialClub wird hierher gesendet.</p>
+        <a href={mark} onClick={(e) => e.preventDefault()} draggable
+          className="inline-flex cursor-grab items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-black active:cursor-grabbing">
+          📌 SC → DC Checker
+        </a>
+        <p className="text-[11px] text-slate-400">Klappt das Ziehen nicht: <button className={btnGhost + " !px-2 !py-0.5 !text-[11px]"} onClick={() => { void navigator.clipboard.writeText(decodeURIComponent(mark.replace(/^javascript:/, ""))).catch(() => undefined); push("ok", "Code kopiert — neues Lesezeichen anlegen und als Adresse „javascript:“ + Code einfügen."); }}><Copy size={12} /> Code kopieren</button></p>
+      </div>
+
+      <Field label="Bridge-Token (Nachrichten ohne diesen Token werden abgelehnt)">
+        <div className="flex gap-2">
+          <input className={`${inputCls} font-mono`} readOnly value={bridgeToken} />
+          <button className={btnGhost} onClick={() => { void navigator.clipboard.writeText(bridgeToken).catch(() => undefined); push("ok", "Bridge-Token kopiert."); }}><Copy size={15} /></button>
+        </div>
+      </Field>
+
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label="Test mit Ziel-ID" className="flex-1"><input className={inputCls} value={testId} onChange={(e) => setTestId(e.target.value.replace(/\D/g, ""))} placeholder="z. B. 172718" /></Field>
+        <button className={btnPrimary} onClick={() => { if (!testId) { push("err", "Bitte eine Ziel-ID eintragen."); return; } const w = openAcpForId(testId); push(w ? "info" : "err", w ? "ACP geöffnet — dort erscheint unten rechts das Bridge-Fenster." : "Pop-up blockiert! Bitte Pop-ups für diese Seite erlauben."); }}><ExternalLink size={15} /> ACP-Test öffnen</button>
+        <button className={btnGhost} onClick={() => { const d = bridgeDiag(); push(d.lastAt ? "ok" : "info", d.lastAt ? `Zuletzt empfangen ${new Date(d.lastAt).toLocaleTimeString("de-DE")}: ${d.lastMsg}` : `Noch nichts empfangen. Extension erkannt: ${d.ext ? "ja" : "nein"} · abgelehnt: ${d.rejected}`); }}><Zap size={15} /> Status prüfen</button>
+      </div>
+
+      <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-slate-400">
+        <p className="font-bold text-slate-200">Wenn es nicht klappt</p>
+        <ul className="mt-1 list-disc space-y-1 pl-4">
+          <li><b>Pop-up-Blocker:</b> Der ACP-Tab muss sich öffnen dürfen, sonst gibt es keine Verbindung zurück.</li>
+          <li><b>Nicht im ACP eingeloggt:</b> Die Weiterleitung zum Login verwirft die Daten — erst einloggen, dann erneut holen.</li>
+          <li><b>Kein SocialClub sichtbar:</b> Im ACP auf die Seite mit dem Social Club wechseln und dort <b>🔎 SC senden</b> klicken.</li>
+          <li><b>Immer möglich:</b> SC im ACP markieren, kopieren und im Feld „SOC / SC“ einfügen — der Rest funktioniert genauso.</li>
+        </ul>
       </div>
     </div>
   );

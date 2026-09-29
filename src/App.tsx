@@ -8,7 +8,7 @@ import {
   getVideo, putVideo, delVideo, hasVideo, findVideo,
   loadMeta, saveMeta, loadMirror, loadDeleted, markDeleted, saveRecord, loadAllRecords, deleteRecord, mergeEntries,
   loadSettings, saveSettings, loadYT, saveYT, loadDrive, saveDrive, loadUsers, saveUsers, loadSession, saveSession,
-  loadBridgeToken, loadQueueMeta, saveQueueMeta, applyCsvFilters, sortCsv, toCSV,
+  loadBridgeToken, loadQueueMeta, saveQueueMeta, applyCsvFilters, sortCsv, toCSV, VIEW_KEY, classifyReason, autoTypes, autoPerma, autoResult,
 } from "./lib/core";
 import { captureThumbnail, runOcrOnFile, youtubeUpload, youtubeWaitProcessing, youtubeSetTitle, driveBackup, openAcpForId, installAcpListener } from "./lib/services";
 import { unlockVault, lockVault, restoreVaultKey, lockStatus, noteLoginFail, noteLoginOk, formatRemain } from "./lib/vault";
@@ -38,7 +38,12 @@ export default function App() {
   const { toasts, push } = useToasts();
   const [booted, setBooted] = useState(false);
   const [user, setUser] = useState("");
-  const [view, setView] = useState<View>("archive");
+  // Beim Aktualisieren beim zuletzt geöffneten Tab bleiben
+  const [view, setViewRaw] = useState<View>(() => {
+    const v = localStorage.getItem(VIEW_KEY) || "";
+    return (["archive", "cases", "upload", "csv", "settings"] as const).includes(v as View) ? (v as View) : "archive";
+  });
+  const setView = useCallback((v: View) => { setViewRaw(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* egal */ } }, []);
   const [entries, setEntries] = useState<PovEntry[]>([]);
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("alle");
   const [search, setSearch] = useState("");
@@ -117,19 +122,35 @@ export default function App() {
     return true;
   }, [push]);
 
-  // ---------- ACP Bridge ----------
+  // ---------- ACP Bridge: SocialClub (Stufe 1) + BannGrund (Stufe 2) ----------
   useEffect(() => installAcpListener((m) => {
-    if (m.type !== "SC_RESULT" || !m.sc) return;
+    if (m.type !== "SC_RESULT" && m.type !== "REASON_RESULT") return;
     (window as unknown as { __DC_LAST_SC?: unknown }).__DC_LAST_SC = m;
-    push("ok", `ACP: SC „${m.sc.slice(0, 12)}…“ empfangen${m.targetId ? ` für ID ${m.targetId}` : ""}.`);
+    const time = new Date().toLocaleTimeString("de-DE");
+    // Nur leere Felder füllen — manuelle Eingaben werden nie überschrieben
+    const patch = (cur: Partial<PovEntry>): Partial<PovEntry> => {
+      const out: Partial<PovEntry> = {};
+      if (m.type === "SC_RESULT" && m.sc && !cur.sc) out.sc = m.sc;
+      const rawReason = m.type === "REASON_RESULT" ? (m.reason || m.rawReason) : (m.reason || "");
+      if (rawReason && !cur.reason) {
+        const r = classifyReason(rawReason) || rawReason;
+        out.reason = r;
+        if (!cur.types?.length) out.types = autoTypes(r);
+        const ap = autoPerma(r); if (ap !== undefined && !cur.perma) out.perma = ap;
+        if (!cur.manualResult) out.manualResult = autoResult(r);
+      }
+      return out;
+    };
+    if (m.type === "SC_RESULT") push("ok", `ACP: SC „${m.sc.slice(0, 12)}…“ empfangen${m.targetId ? ` für ID ${m.targetId}` : ""}.`);
+    else push("ok", `ACP: BannGrund „${m.reason || m.rawReason}“ empfangen${m.admin ? ` (Admin: ${m.admin})` : ""}.`);
+    setAcpStatus((s) => ({ ...s, [m.targetId || "*"]: m.type === "SC_RESULT" ? `✓ SC übernommen (${time}) — Character-Info wird für den BannGrund geöffnet …` : `✓ BannGrund übernommen (${time})` }));
     setQueue((prev) => prev.map((q) => (m.targetId && q.ocr.targetId === m.targetId) || (!m.targetId && expanded === q.qid)
-      ? { ...q, ocr: { ...q.ocr, sc: q.ocr.sc || m.sc, reason: q.ocr.reason || m.reason || "" } } : q));
-    setAcpStatus((s) => ({ ...s, [m.targetId || "*"]: `✓ SC aus ACP übernommen (${new Date().toLocaleTimeString("de-DE")})` }));
+      ? { ...q, ocr: { ...q.ocr, ...patch(q.ocr) } } : q));
     if (m.targetId) {
       const cur = entriesRef.current;
-      const next = cur.map((e) => e.targetId === m.targetId && !e.sc ? { ...e, sc: m.sc, updatedAt: Date.now(), quality: entryQuality({ ...e, sc: m.sc }) } : e);
-      if (next.some((e, i) => e !== cur[i])) persist(next, "ACP SC übernommen");
-      setEditing((ed) => ed && ed.targetId === m.targetId && !ed.sc ? { ...ed, sc: m.sc } : ed);
+      const next = cur.map((e) => { if (e.targetId !== m.targetId) return e; const p = patch(e); return Object.keys(p).length ? { ...e, ...p, updatedAt: Date.now(), quality: entryQuality({ ...e, ...p }) } : e; });
+      if (next.some((e, i) => e !== cur[i])) persist(next, "ACP-Daten übernommen");
+      setEditing((ed) => ed && ed.targetId === m.targetId ? { ...ed, ...patch(ed) } : ed);
     }
   }), [expanded, persist, push]);
 
@@ -143,27 +164,32 @@ export default function App() {
 
   // ---------- Archiv (Filter = reine Anzeige) ----------
   const dupIds = useMemo(() => findDuplicateIds(entries), [entries]);
+  // Ins POV-Archiv verschobene Einträge erscheinen NUR noch unter „POV Archiv“,
+  // nicht mehr unter „Alle“ und den übrigen Filtern.
+  const active = useMemo(() => entries.filter((e) => !e.permaArchive), [entries]);
+  const archived = useMemo(() => entries.filter((e) => e.permaArchive), [entries]);
   const counts = useMemo(() => ({
-    alle: entries.length, bans: entries.filter(isBan).length, pc: entries.filter(isPcCheck).length, soc: entries.filter(isSocBan).length,
-    hard: entries.filter(isHardbann).length, cheater: entries.filter(isCheater).length, negativ: entries.filter(isNegative).length,
-    verweigert: entries.filter(isVerweigert).length, ohneVideo: entries.filter((e) => !e.hasVideo).length,
-    archiv: entries.filter((e) => e.permaArchive).length, doppelt: entries.filter((e) => dupIds.has(e.targetId)).length,
-  }), [entries, dupIds]);
+    alle: active.length, bans: active.filter(isBan).length, pc: active.filter(isPcCheck).length, soc: active.filter(isSocBan).length,
+    hard: active.filter(isHardbann).length, cheater: active.filter(isCheater).length, negativ: active.filter(isNegative).length,
+    verweigert: active.filter(isVerweigert).length, ohneVideo: active.filter((e) => !e.hasVideo).length,
+    archiv: archived.length, doppelt: entries.filter((e) => dupIds.has(e.targetId)).length,
+  }), [entries, active, archived, dupIds]);
   const archiveList = useMemo(() => {
     const s = search.trim().toLowerCase();
-    let list = entries;
+    // „POV Archiv“ und „Doppelte IDs“ sehen alles, alle anderen nur die nicht archivierten
+    let list = archiveFilter === "archiv" ? archived : archiveFilter === "doppelt" ? entries : active;
     switch (archiveFilter) {
       case "bans": list = list.filter(isBan); break; case "pc": list = list.filter(isPcCheck); break;
       case "soc": list = list.filter(isSocBan); break; case "hard": list = list.filter(isHardbann); break;
       case "cheater": list = list.filter(isCheater); break; case "negativ": list = list.filter(isNegative); break;
       case "verweigert": list = list.filter(isVerweigert); break; case "ohne-video": list = list.filter((e) => !e.hasVideo); break;
-      case "archiv": list = list.filter((e) => e.permaArchive); break; case "doppelt": list = list.filter((e) => dupIds.has(e.targetId)); break;
+      case "doppelt": list = list.filter((e) => dupIds.has(e.targetId)); break;
       default: break;
     }
     if (s) list = list.filter((e) => `${e.targetId} ${e.sc} ${e.reason} ${e.manualResult} ${e.discord} ${(e.pcCheckers || []).join(" ")}`.toLowerCase().includes(s));
     return [...list].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.updatedAt || 0) - (a.updatedAt || 0));
-  }, [entries, archiveFilter, search, dupIds]);
-  const casesList = useMemo(() => entries.filter((e) => getMissing(e).length > 0 || e.result === "VERDACHT"), [entries]);
+  }, [entries, active, archived, archiveFilter, search, dupIds]);
+  const casesList = useMemo(() => active.filter((e) => getMissing(e).length > 0 || e.result === "VERDACHT"), [active]);
 
   // ---------- Aktionen ----------
   const addPool = (n: string) => { const c = [...new Set([...loadCustomCheckers(), n])]; saveCustomCheckers(c); setPool(checkerPool()); };
@@ -175,7 +201,7 @@ export default function App() {
   };
   const doArchive = (ids: string[], to: boolean) => {
     persist(entries.map((e) => ids.includes(e.id) ? { ...e, permaArchive: to, updatedAt: Date.now() } : e), to ? "POV archiviert" : "POV aus Archiv entfernt");
-    push("ok", to ? `${ids.length} POV(s) ins POV-Archiv (bleiben unter „Alle“).` : `${ids.length} POV(s) aus dem Archiv entfernt.`);
+    push("ok", to ? `${ids.length} POV(s) ins POV-Archiv verschoben — ab jetzt nur noch dort sichtbar.` : `${ids.length} POV(s) zurück in die aktive Liste.`);
     setSelected(new Set());
   };
   const doDelete = async (ids: string[]) => {
@@ -388,7 +414,7 @@ export default function App() {
   }
 
   const titles: Record<View, { t: string; d: string }> = {
-    archive: { t: "Archiv", d: `POV-Fälle, Bans, PC-Checks und CSV-Export · ${entries.length} Einträge` },
+    archive: { t: "Archiv", d: `${counts.alle} aktiv · ${counts.archiv} im POV-Archiv · ${entries.length} gesamt` },
     cases: { t: "Verdachtsfälle", d: `Fehlende oder widersprüchliche Informationen · ${casesList.length}` },
     upload: { t: "POVs hochladen", d: "Mehrere Aufnahmen gleichzeitig verarbeiten" },
     csv: { t: "CSV erstellen", d: "Proof · Datum · ID · SOC · RID · Discord ID · Familie · Ergebnis · Grund · Admin 1–5" },
