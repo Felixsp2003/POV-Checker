@@ -1654,30 +1654,36 @@ function InstallGuide({ push }: { push: (k: "ok" | "err" | "info", t: string) =>
         <p className="mt-1 text-xs text-slate-400">Alles kostenlos. Die App ist eine statische Website: einmal bauen, auf GitHub Pages hochladen, Adresse behalten.</p>
       </div>
 
-      {step("1", "Projekt bauen (einmalig auf deinem PC)", <>
-        <p>Ordner öffnen, dann diese zwei Befehle ausführen (Node.js nötig — nodejs.org, LTS-Version):</p>
-        <CodeBox code={"npm install\nnpm run build"} />
-        <p>Ergebnis liegt im Ordner <b className="text-slate-200">dist/</b>: <span className="font-mono">index.html</span>, <span className="font-mono">manual.html</span>, <span className="font-mono">oauth-callback.html</span> und <span className="font-mono">ACP-Browser-Extension/</span>.</p>
-        <p>Nur zum Ausprobieren ohne Veröffentlichung diesen Befehl ausführen und danach <span className="font-mono">http://localhost:5173</span> im Browser öffnen:</p>
-        <CodeBox code={"npm run dev"} />
+      {step("1", "Dateien ins Repo hochladen — kein Bauen nötig", <>
+        <p>GitHub baut die App automatisch. Du brauchst <b className="text-slate-200">kein Node.js</b> und keine Konsole.</p>
+        <p>a) Auf dein Repo gehen (z. B. <span className="font-mono">github.com/Felixsp2003/POV-Checker</span>).</p>
+        <p>b) Link <b className="text-slate-200">„uploading an existing file“</b> klicken.</p>
+        <p>c) Diese Dateien und Ordner aus dem Projekt hochladen:</p>
+        <CodeBox code={".github/workflows/deploy.yml\nsrc/\npublic/\nindex.html\npackage.json\ntsconfig.json\nvite.config.ts\nREADME.md\n.gitignore"} />
+        <p><b className="text-slate-200">Nicht</b> hochladen: <span className="font-mono">node_modules/</span> und <span className="font-mono">dist/</span> — falls vorhanden.</p>
+        <p>d) Unten <b className="text-slate-200">„Commit changes“</b> klicken.</p>
       </>)}
 
-      {step("2", "Auf GitHub Pages hochladen", <>
-        <p>a) Neues Repo anlegen, z. B. <span className="font-mono">dc-checker</span> (kostenlos).</p>
-        <p>b) <b className="text-slate-200">Den Inhalt von dist/</b> hochladen — `index.html` muss direkt oben liegen, nicht in einem Unterordner.</p>
-        <p>c) Repo → <b className="text-slate-200">Settings → Pages</b> → Source „Deploy from a branch“ → Branch <span className="font-mono">main</span> + Ordner <span className="font-mono">/ (root)</span> → Save.</p>
-        <p>d) Nach etwa einer Minute online: <span className="font-mono text-cyan-300">https://DEINNAME.github.io/dc-checker/</span></p>
+      {step("2", "GitHub Pages aktivieren", <>
+        <p>a) Repo → <b className="text-slate-200">Settings</b> (oben im Menü).</p>
+        <p>b) Links <b className="text-slate-200">Pages</b> wählen.</p>
+        <p>c) Bei „Source“ auf <b className="text-slate-200">GitHub Actions</b> stellen.</p>
+        <p>d) Oben auf <b className="text-slate-200">Actions</b> klicken und die Meldung bestätigen, falls GitHub nachfragt.</p>
+        <p>Nach etwa einer Minute ist die Seite online:</p>
+        <p><span className="font-mono text-cyan-300">https://felixsp2003.github.io/POV-Checker/</span></p>
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
           <p className="text-amber-200"><b>Adresse nie mehr ändern.</b> Die Daten sind im Browser pro Adresse gespeichert. Neue Adresse = leeres Archiv (dann Tresor wiederherstellen).</p>
         </div>
+        <p>Jeder Push auf <span className="font-mono">main</span> startet automatisch einen neuen Build.</p>
       </>)}
 
       {step("3", "Browser-Extension installieren", <>
-        <p>Den Ordner <span className="font-mono">ACP-Browser-Extension</span> gibt es zweimal: im Projekt unter <span className="font-mono">public/</span> und nach dem Bauen in <span className="font-mono">dist/</span>. Nimm einen davon und lass ihn dauerhaft auf deinem PC liegen — Chrome liest die Extension direkt aus diesem Ordner. Verschiebst oder löschst du ihn, funktioniert sie nicht mehr.</p>
+        <p>Im Repo den Ordner <span className="font-mono">public/ACP-Browser-Extension</span> herunterladen: Ordner öffnen → rechts oben das Download-Symbol → ZIP → entpacken.</p>
+        <p>Lass den entpackten Ordner dauerhaft auf deinem PC liegen — Chrome liest die Extension direkt daraus. Verschiebst oder löschst du ihn, funktioniert sie nicht mehr.</p>
         <p>a) <span className="font-mono">chrome://extensions</span> öffnen (Edge: <span className="font-mono">edge://extensions</span>).</p>
-        <p>b) <b className="text-slate-200">Entwicklermodus</b> einschalten.</p>
-        <p>c) <b className="text-slate-200">Entpackte Erweiterung laden</b> → Ordner <span className="font-mono">ACP-Browser-Extension</span> wählen.</p>
-        <p>d) Läuft dein Checker nicht auf github.io oder localhost: in der <span className="font-mono">manifest.json</span> beim zweiten <span className="font-mono">matches</span>-Eintrag deine Adresse ergänzen und neu laden.</p>
+        <p>b) <b className="text-slate-200">Entwicklermodus</b> einschalten (oben rechts).</p>
+        <p>c) <b className="text-slate-200">Entpackte Erweiterung laden</b> → den entpackten Ordner <span className="font-mono">ACP-Browser-Extension</span> wählen.</p>
+        <p>d) Für <span className="font-mono">github.io</span> ist alles vorkonfiguriert — keine Änderung nötig. Bei einer eigenen Domain in der <span className="font-mono">manifest.json</span> beim zweiten <span className="font-mono">matches</span>-Eintrag ergänzen und neu laden.</p>
         <button className={btnPrimary} onClick={() => { void downloadExtension(); push("info", "Extension-Dateien werden heruntergeladen — in einen Ordner legen und in Chrome laden."); }}>
           <Download size={15} /> Extension-Dateien herunterladen
         </button>
@@ -1705,7 +1711,8 @@ function InstallGuide({ push }: { push: (k: "ok" | "err" | "info", t: string) =>
 
       <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-slate-400">
         <p className="font-bold text-slate-200">Kurzform</p>
-        <p className="mt-1">Bauen → dist/ auf GitHub Pages → Adresse behalten → Extension laden → als Adam anmelden → Tresor verbinden.</p>
+        <p className="mt-1">Dateien hochladen → Pages auf „GitHub Actions“ stellen → Adresse behalten → Extension laden → als Adam anmelden → eigenes Passwort setzen → Tresor verbinden.</p>
+        <p className="mt-1 text-slate-500">Kein Node.js und keine Konsole nötig — GitHub baut automatisch.</p>
       </div>
     </div>
   );

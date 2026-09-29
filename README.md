@@ -1,97 +1,92 @@
-# Grand RP DC Checker — Installation
+# Grand RP DC Checker — Installation (GitHub Pages, kostenlos)
 
-Kostenlos, ohne Server. Läuft als statische Website (z. B. GitHub Pages).
+Diese Version braucht **kein Node.js und keine Konsole** auf deinem PC.
+GitHub baut die Website automatisch.
 
-## 1. Website bauen
+## Schritt 1 — Dateien ins Repo hochladen
+
+Auf https://github.com/Felixsp2003/POV-Checker klicken:
+
+> „uploading an existing file"
+
+Dann alle Dateien **aus dem Projekt** hochladen (nicht nur `dist`, es gibt hier nichts
+zu bauen). Es müssen enthalten sein:
+
+```
+.github/workflows/deploy.yml
+src/                  (ganzer Ordner)
+public/               (ganzer Ordner, inkl. ACP-Browser-Extension)
+index.html
+package.json
+tsconfig.json
+vite.config.ts
+README.md
+.gitignore
+```
+
+**Nicht** hochladen, falls vorhanden: `node_modules/`, `dist/`.
+
+Danach unten **„Commit changes"** klicken.
+
+## Schritt 2 — GitHub Pages aktivieren
+
+1. Repo → **Settings** (oben im Menü).
+2. Links **Pages** wählen.
+3. Bei „Source" auf **GitHub Actions** stellen.
+4. Zurück auf **Code** → oben auf **Actions** klicken.
+5. Die Meldung bestätigen, falls GitHub nachfragt.
+
+Der Build läuft jetzt automatisch. Nach etwa einer Minute ist die Seite online:
+
+**https://felixsp2003.github.io/POV-Checker/**
+
+## Schritt 3 — Anmelden
+
+- Benutzer: `Adam`
+- Passwort: `Admin`
+
+Danach zwingt dich die App, ein eigenes Passwort zu setzen (min. 8 Zeichen,
+Buchstaben und Zahlen). Dieses Passwort ist gleichzeitig der Schlüssel für den
+verschlüsselten Cloud-Tresor. Sicher notieren — es gibt keine Wiederherstellung.
+
+## Schritt 4 — Browser-Extension (nur für den SC-Abruf aus dem ACP)
+
+1. Im Repo den Ordner `public/ACP-Browser-Extension` herunterladen
+   (auf den Ordner → Download-ZIP rechts oben) und entpacken.
+2. Chrome/Edge: `chrome://extensions` öffnen.
+3. **Entwicklermodus** einschalten.
+4. **Entpackte Erweiterung laden** → den Ordner `ACP-Browser-Extension` wählen.
+5. Ordner dauerhaft liegen lassen, nicht verschieben.
+
+Die Extension läuft auf `github.io` — für deine Adresse ist das bereits korrekt
+konfiguriert. Ohne sie läuft die App trotzdem, nur der automatische SC-Abruf fehlt.
+
+## Schritt 5 — Tresor für einen zweiten PC
+
+In der App: **Einstellungen → Tresor / anderer PC**
+
+- Variante A: Google Drive verbinden
+- Variante B: GitHub Gist (Token mit Recht `gist`, Gist-ID auf beiden PCs gleich)
+
+Beide Varianten sichern **AES-256-verschlüsselt**. Ohne dein Passwort sind die
+Backups unlesbar. Auf dem zweiten PC: anmelden → „Auf diesem PC wiederherstellen".
+
+## Alternative: lokal bauen
+
+Falls du Node.js installieren möchtest:
 
 ```bash
 npm install
 npm run build
 ```
 
-Danach liegt alles in `dist/`:
+Danach liegt die fertige Seite im Ordner `dist/`. Deren Inhalt kannst du ebenso
+direkt ins Repo hochladen (dann `Settings → Pages → Deploy from a branch`).
 
-```
-dist/
-├── index.html                    ← die App
-├── oauth-callback.html           ← Google OAuth
-├── manual.html                   ← manuelle Korrektur
-└── ACP-Browser-Extension/        ← Browser-Extension
-    ├── manifest.json
-    ├── background.js
-    ├── website-bridge.js
-    ├── content.js
-    ├── dc-receiver.js
-    └── README.md
-```
+## Wichtig
 
-## 2. Website veröffentlichen (GitHub Pages, kostenlos)
-
-1. Neues **privates oder öffentliches Repo** auf GitHub anlegen (z. B. `dc-checker`).
-2. Alle Dateien aus `dist/` in das Repo hochladen (kein Unterordner — `index.html` muss oben liegen).
-3. Repo → **Settings → Pages** → Source: `Deploy from a branch` → Branch `main`, Ordner `/ (root)` → Save.
-4. Nach ~1 Minute ist die Seite erreichbar:
-   `https://DEINNAME.github.io/dc-checker/`
-
-**Wichtig:** Die Adresse darf sich nicht mehr ändern. localStorage/IndexedDB sind pro Adresse gespeichert.
-Bei einem Adresswechsel sieht die App leer aus — dann Tresor wiederherstellen.
-
-### Schnell lokal testen
-
-```bash
-npm run dev
-```
-
-Dann `http://localhost:5173` öffnen. Läuft der Checker nur lokal, in der
-`ACP-Browser-Extension/manifest.json` beim zweiten `matches`-Eintrag die eigene Domain ergänzen.
-
-## 3. Browser-Extension installieren
-
-1. `chrome://extensions` öffnen (Edge: `edge://extensions`).
-2. **Entwicklermodus** einschalten (oben rechts).
-3. **Entpackte Erweiterung laden** klicken.
-4. Den Ordner `ACP-Browser-Extension` auswählen.
-5. Prüfen: Extension „GrandRP ACP Bridge“ erscheint.
-
-Läuft der Checker nicht auf `github.io` / `localhost`, in der `manifest.json` das zweite
-`content_scripts` → `matches` um die eigene Adresse ergänzen und die Erweiterung neu laden.
-
-## 4. Login
-
-Erster Login:
-
-- Benutzer: **Adam**
-- Passwort: **Admin**
-
-Direkt danach sperrt sich die App und erzwingt ein eigenes Passwort
-(min. 8 Zeichen, Buchstaben und Zahlen). Erst dann ist sie nutzbar.
-
-Im Quellcode steht **kein persönliches Passwort** mehr, nur dieser öffentliche
-Standardzugang. Gespeichert wird ausschließlich ein SHA-256-Hash mit Salt.
-
-**Wichtig:** Das Passwort ist zugleich der Schlüssel für den AES-256-Tresor.
-Ohne dieses Passwort kann niemand die Cloud-Backups lesen — auch nicht Google
-oder GitHub. Eine Wiederherstellung gibt es nicht. Also sicher notieren.
-
-Passwort später ändern: Einstellungen → Benutzer → „Passwort ändern“.
-
-## 5. Tresor für einen anderen PC
-
-Einstellungen → **Tresor / anderer PC**
-
-- Variante A: **Google Drive verbinden**
-- Variante B: **GitHub Gist** (Token mit Recht `gist`, Gist-ID auf beiden PCs gleich)
-
-Beide Varianten sichern **AES-256-verschlüsselt**. Ohne dein Passwort sind die Backups
-unlesbar. Backup: „Jetzt alles sichern“. Zweiter PC: „Auf diesem PC wiederherstellen“.
-
-## 6. YouTube (optional)
-
-1. Google Cloud Console → Projekt anlegen (kostenlos).
-2. **YouTube Data API v3** aktivieren.
-3. OAuth-Client-ID (Webanwendung) erstellen.
-4. Autorisierte JavaScript-Quelle: deine GitHub-Pages-URL.
-5. Client-ID im Checker unter Einstellungen → Allgemein eintragen.
-6. Einstellungen → YouTube ×3 → „Verbinden“.
-
-Ohne Verbindung läuft der Upload als Simulation (Ablauf testbar, kein echtes Video).
+- **Adresse nie ändern.** Browser-Daten sind pro Adresse gespeichert.
+  Neue Adresse = leeres Archiv (Tresor wiederherstellen).
+- **Repo ist Public.** Das ist für kostenlose GitHub Pages normal. Deine POV-Daten
+  liegen **nicht** im Repo, sondern im Browser und verschlüsselt im Tresor.
+- Jeder Push auf `main` startet automatisch einen neuen Build.
