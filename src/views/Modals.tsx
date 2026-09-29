@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { KeyRound, Save, XCircle } from "lucide-react";
-import { DB_NAME, PovEntry, STORE, buildFinalFilename, emptyEntry, findVideo, getMissing, loadPhoto, savePhoto } from "../lib/core";
+import { DB_NAME, PovEntry, STORE, buildFinalFilename, canBuildFinalName, emptyEntry, findVideo, getMissing, loadPhoto, savePhoto } from "../lib/core";
 import { captureFrameAt } from "../lib/services";
 import { Badge, Field, ModalShell, btnGhost, btnPrimary, inputCls } from "../ui";
 import PovForm from "./PovForm";
@@ -28,7 +28,7 @@ export function EditModal({ entry, onClose, onSave, pool, onAddPool, acpStatus, 
         onOpenPov={() => { const u = url || f.youtubeUrl; if (u) window.open(u, "_blank", "noopener"); }} />
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/10 pt-4">
         {miss.length > 0 ? <Badge tone="orange">fehlt: {miss.join(", ")}</Badge> : <Badge tone="green">vollständig</Badge>}
-        <span className="text-[11px] text-slate-500">Finaler Name: <b className="text-slate-300">{buildFinalFilename(f)}</b></span>
+        <span className="text-[11px] text-slate-500">{canBuildFinalName(f) ? <>Finaler Name: <b className="text-slate-300">{buildFinalFilename(f)}</b></> : <>Name bleibt vorläufig: <b className="text-slate-300">{f.origFilename || f.filename}</b></>}</span>
         <div className="ml-auto flex gap-2">
           <button className={btnGhost} onClick={onClose}>Abbrechen</button>
           <button className={btnPrimary} onClick={() => onSave(f)}><Save size={15} /> Speichern</button>
@@ -51,7 +51,7 @@ export function NewEntryModal({ onClose, onSave, serverDefault, pool, onAddPool 
         {miss.length > 0 ? <Badge tone="orange">fehlt: {miss.join(", ")}</Badge> : <Badge tone="green">vollständig</Badge>}
         <div className="ml-auto flex gap-2">
           <button className={btnGhost} onClick={onClose}>Abbrechen</button>
-          <button className={btnPrimary} onClick={() => onSave({ ...f, filename: buildFinalFilename(f), youtubeUrl: f.youtubeUrl || (/youtu\.?be/.test(f.proof) ? f.proof : "") })}><Save size={15} /> Speichern</button>
+          <button className={btnPrimary} onClick={() => onSave({ ...f, filename: buildFinalFilename(f, f.origFilename), youtubeUrl: f.youtubeUrl || (/youtu\.?be/.test(f.proof) ? f.proof : "") })}><Save size={15} /> Speichern</button>
         </div>
       </div>
     </ModalShell>

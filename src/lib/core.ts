@@ -8,7 +8,7 @@
 // ============================================================
 import { normalizeEntry, parseMetaContainer, serializeMeta, legacyCount } from "./legacy";
 
-export const APP_VERSION = "V152";
+export const APP_VERSION = "V153";
 export const VIEW_KEY = "grandrp_view_v42";
 export const META_KEY = "grandrp_pov_meta_v42";
 export const DB_NAME = "grandrp_pov_db_v42";
@@ -288,11 +288,19 @@ export function findDuplicateIds(entries: PovEntry[]): Set<string> {
   count.forEach((c, id) => { if (c > 1) out.add(id); });
   return out;
 }
+// Der finale Name wird ERST vergeben, wenn ID, Grund und Datum feststehen.
+// Vorher gibt es keinen Platzhalter wie „UNBEKANNT, POV“ — dann bleibt der Originalname.
+export function canBuildFinalName(e: Partial<PovEntry>): boolean {
+  return /^\d{1,8}$/.test(String(e.targetId || "").trim())
+    && String(e.reason || "").trim().length > 1
+    && !!String(e.date || "").trim();
+}
 // "172718, PC-Check Verweigerung, 07.09.2026.mp4" (wie alte App)
-export function buildFinalFilename(e: Partial<PovEntry>): string {
-  const id = String(e.targetId || "").trim() || "UNBEKANNT";
-  const reason = String(e.reason || "POV").trim().replace(/[\\/:*?"<>|]/g, "-") || "POV";
-  return `${id}, ${reason}, ${formatDate(e.date || todayISO())}.mp4`;
+export function buildFinalFilename(e: Partial<PovEntry>, fallback = ""): string {
+  if (!canBuildFinalName(e)) return fallback;
+  const id = String(e.targetId).trim();
+  const reason = String(e.reason).trim().replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ");
+  return `${id}, ${reason}, ${formatDate(String(e.date))}.mp4`;
 }
 export function emptyEntry(serverDefault = "3"): PovEntry {
   const now = Date.now();

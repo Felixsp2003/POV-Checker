@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, AlertTriangle, Upload, FileSpreadsheet, Settings as SettingsIcon, Search, Plus, RefreshCw, LogOut, Shield, Database, KeyRound, User } from "lucide-react";
 import {
   APP_VERSION, META_KEY, DB_NAME, PovEntry, QueueItem, YTConnection, DriveConfig, AppSettings,
-  uid, sha256, todayISO, dateFromFilename, buildFinalFilename, entryQuality, deriveResult, getMissing, findDuplicateIds,
+  uid, sha256, todayISO, dateFromFilename, buildFinalFilename, canBuildFinalName, entryQuality, deriveResult, getMissing, findDuplicateIds,
   isHardbann, isSocBan, isCheater, isPcCheck, isBan, isNegative, isVerweigert, checkerPool, loadCustomCheckers, saveCustomCheckers,
   PC_CHECKER_LEAD, DOCUMENT_STATUS,
   getVideo, putVideo, delVideo, hasVideo, findVideo,
@@ -231,11 +231,13 @@ export default function App() {
     push("err", "Kein lokales Video und kein Proof-Link vorhanden.");
   };
   const saveEditedEntry = (e: PovEntry) => {
-    const fixed: PovEntry = { ...e, filename: buildFinalFilename(e), updatedAt: Date.now(), quality: entryQuality(e), result: deriveResult(e), status: getMissing(e).length ? `unvollständig: ${getMissing(e).join(", ")}` : "vollständig", rid: e.rid || "" };
+    const filename = buildFinalFilename(e, e.origFilename || e.filename);
+    const fixed: PovEntry = { ...e, filename, youtubeTitle: filename, updatedAt: Date.now(), quality: entryQuality(e), result: deriveResult(e), status: getMissing(e).length ? `unvollständig: ${getMissing(e).join(", ")}` : "vollständig", rid: e.rid || "" };
     persist(entries.map((x) => x.id === e.id ? fixed : x), "POV bearbeitet");
-    if (fixed.youtubeId) void youtubeSetTitle(fixed.youtubeId, fixed.filename, ytConns[(fixed.ytSlot || 1) - 1]?.accessToken || "");
+    // Nachträglich vervollständigt → YouTube-Titel auf den finalen Namen setzen
+    if (fixed.youtubeId && canBuildFinalName(fixed)) void youtubeSetTitle(fixed.youtubeId, filename, ytConns[(fixed.ytSlot || 1) - 1]?.accessToken || "");
     setEditing(null); setDetail(null);
-    push("ok", `ID ${fixed.targetId || "—"} gespeichert — bleibt nach Reload erhalten.`);
+    push("ok", canBuildFinalName(fixed) ? `Gespeichert als „${filename}“.` : `Gespeichert — Name noch vorläufig, es fehlt: ${getMissing(fixed).join(", ")}.`);
   };
 
   // ---------- Upload-Pipeline ----------
@@ -340,7 +342,9 @@ export default function App() {
       // ---- SCHRITT 2: YouTube-Upload (Kanalwechsel bei vollem Limit) ----
       let videoId = item.youtubeId, url = item.youtubeUrl;
       if (!videoId) {
-        const title = buildFinalFilename({ ...item.ocr, date: item.ocr.date || dateFromFilename(item.fileName) });
+        // Vorläufiger Titel = Originaldateiname, solange ID/Grund fehlen.
+        // Nach dem Speichern wird der Titel auf den finalen Namen gesetzt.
+        const title = buildFinalFilename({ ...item.ocr, date: item.ocr.date || dateFromFilename(item.fileName) }, item.fileName);
         let slotIdx = pickSlot(item.ytSlot);
         let lastQuota = "";
         for (let tries = 0; tries < 3 && slotIdx >= 0; tries++) {
@@ -381,6 +385,14 @@ export default function App() {
 
   const saveQueueItem = async (qid: string, next: boolean) => {
     let item = queueRef.current.find((q) => q.qid === qid); if (!item) return;
+    // Ohne ID/Grund/Datum gibt es keinen finalen Namen — lieber nachfragen als „UNBEKANNT, POV“
+    if (!canBuildFinalName(item.ocr)) {
+      const fehlt = [!item.ocr.targetId && "Ziel-ID", !item.ocr.reason && "Grund", !item.ocr.date && "Datum"].filter(Boolean).join(", ");
+      if (!window.confirm(`Es fehlt: ${fehlt}.\n\nDer POV behält vorerst den Originalnamen „${item.fileName}“ und landet unter „Verdachtsfälle“.\nSobald du die Angaben ergänzt, wird automatisch umbenannt.\n\nTrotzdem speichern?`)) {
+        setExpanded(qid);
+        return;
+      }
+    }
     setBusy(qid);
     try {
       if (!item.youtubeId) {
@@ -399,7 +411,7 @@ export default function App() {
         pcCheckers: (o.pcCheckers && o.pcCheckers.length ? o.pcCheckers : [PC_CHECKER_LEAD]).filter(Boolean), timestamps: o.timestamps || {}, ytSlot: item.ytSlot + 1,
         result: "OFFEN", status: "", family: "", note: "", hasVideo: !!file, createdAt: now, updatedAt: now, quality: entryQuality(o), ocrRaw: item.ocrResult.slice(0, 2000), adminId: settings.adminId,
       };
-      const filename = buildFinalFilename(base);
+      const filename = buildFinalFilename(base, base.origFilename);
       const entry: PovEntry = { ...base, filename, youtubeTitle: filename, result: deriveResult(base), status: getMissing(base).length ? `unvollständig: ${getMissing(base).join(", ")}` : "vollständig" };
       // 1) Video dauerhaft  2) Thumbnail  3) Meta  4) verifizieren  5) Queue bereinigen
       if (file) await putVideo(id, file, { name: filename });
@@ -413,7 +425,9 @@ export default function App() {
       filesRef.current.delete(qid);
       setEntries(nextEntries);
       const rest = queueRef.current.filter((q) => q.qid !== qid); setQueue(rest); saveQueueMeta(rest);
-      push("ok", `Gespeichert: ${filename}${entry.permaArchive ? " · POV-Archiv" : " · unter „Alle“"}.`);
+      push(canBuildFinalName(entry) ? "ok" : "info", canBuildFinalName(entry)
+        ? `Gespeichert: ${filename}${entry.permaArchive ? " · POV-Archiv" : " · unter „Alle“"}.`
+        : `Gespeichert mit Originalname „${filename}“ — Umbenennung erfolgt, sobald ${getMissing(entry).join(" und ")} ergänzt ${getMissing(entry).length > 1 ? "sind" : "ist"}.`);
       void driveBackup("POV gespeichert").then((r) => setDriveMsg(r.msg));
       if (item.youtubeId) void youtubeSetTitle(item.youtubeId, filename, ytConns[item.ytSlot]?.accessToken || "");
       const idx = queueRef.current.findIndex((q) => q.qid === qid);

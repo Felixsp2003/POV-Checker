@@ -149,10 +149,12 @@ export default function PovForm(p: PovFormProps) {
         <Field label="Proof" className="md:col-span-2">
           <input className={inputCls} value={v.proof || v.youtubeUrl || ""} onChange={(e) => p.onChange({ proof: e.target.value.trim() })} placeholder="https://youtu.be/…" />
         </Field>
-        <Field label="Finaler Dateiname" className="md:col-span-2" hint="Wird auch als YouTube-Titel gesetzt.">
+        <Field label="Finaler Dateiname" className="md:col-span-2"
+          hint={finalName ? "Schema: ID, Grund, Datum — wird auch als YouTube-Titel gesetzt." : "Wird erst vergeben, wenn Ziel-ID, Grund und Datum feststehen. Bis dahin bleibt der Originalname."}>
           <div className="flex gap-2">
-            <input className={`${inputCls} font-mono`} readOnly value={finalName} />
-            <button type="button" className={btnGhost} onClick={() => copyText(finalName)}><Copy size={14} /></button>
+            <input className={`${inputCls} font-mono ${finalName ? "" : "text-orange-300"}`} readOnly
+              value={finalName || `⏳ noch nicht vergeben — fehlt: ${[!v.targetId && "Ziel-ID", !v.reason && "Grund", !v.date && "Datum"].filter(Boolean).join(", ")}`} />
+            <button type="button" className={btnGhost} disabled={!finalName} onClick={() => copyText(finalName)}><Copy size={14} /></button>
           </div>
         </Field>
       </div>
@@ -205,7 +207,7 @@ export default function PovForm(p: PovFormProps) {
       {missing.length > 0 ? (
         <p className="rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-xs font-semibold text-orange-200">⚠ Bitte prüfen: {missing.join(" · ")}</p>
       ) : (
-        <p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200">✓ Vollständig — {finalName}</p>
+        <p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200">✓ Vollständig — <span className="font-mono">{finalName}</span></p>
       )}
 
       {/* Bannscreen in voller Breite — Klick springt im Video zur Fundstelle */}
