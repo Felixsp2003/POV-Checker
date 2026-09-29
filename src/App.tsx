@@ -425,7 +425,8 @@ export default function App() {
   };
 
   // ---------- CSV ----------
-  const csvFiltered = useMemo(() => sortCsv(applyCsvFilters(entries, { active: csvActive, search: csvSearch, from: csvFrom, to: csvTo }), csvSort), [entries, csvActive, csvSearch, csvFrom, csvTo, csvSort]);
+  // Nur noch nicht archivierte POVs — was im POV-Archiv liegt, ist bereits eingetragen
+  const csvFiltered = useMemo(() => sortCsv(applyCsvFilters(active, { active: csvActive, search: csvSearch, from: csvFrom, to: csvTo }), csvSort), [active, csvActive, csvSearch, csvFrom, csvTo, csvSort]);
   const exportCSV = () => {
     const blob = new Blob([toCSV(csvFiltered)], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `grandrp-povs-${csvFiltered.length}-${todayISO()}.csv`; a.click();
@@ -499,7 +500,7 @@ export default function App() {
     archive: { t: "Archiv", d: `${counts.alle} aktiv · ${counts.archiv} im POV-Archiv · ${entries.length} gesamt` },
     cases: { t: "Verdachtsfälle", d: `Fehlende oder widersprüchliche Informationen · ${casesList.length}` },
     upload: { t: "POVs hochladen", d: "Mehrere Aufnahmen gleichzeitig verarbeiten" },
-    csv: { t: "CSV erstellen", d: "Proof · Datum · ID · SOC · RID · Discord ID · Familie · Ergebnis · Grund · Admin 1–5" },
+    csv: { t: "CSV erstellen", d: `${counts.alle} noch einzutragen · ${counts.archiv} bereits im POV-Archiv (ausgeblendet)` },
     settings: { t: "Einstellungen", d: "OCR · PC-Checker · YouTube ×3 · Tresor · ACP · Benutzer" },
   };
   const filters: Array<{ id: ArchiveFilter; label: string; count: number }> = [
@@ -578,7 +579,7 @@ export default function App() {
             onPatch={(qid, patch) => patchQ(qid, patch)} onPatchOcr={(qid, patch) => patchQ(qid, (q) => ({ ocr: { ...q.ocr, ...patch } }))}
             onAcp={(q) => openAcp(q.ocr.targetId || "", q.qid)} getFile={getFile}
             onRecapture={(qid, sec) => { void getFile(qid).then((f) => f && captureFrameAt(f, sec).then((d) => { if (d) patchQ(qid, { bannerPhoto: d }); })); }} />}
-          {view === "csv" && <CsvView entries={entries} filtered={csvFiltered} active={csvActive} setActive={setCsvActive} search={csvSearch} setSearch={setCsvSearch} from={csvFrom} setFrom={setCsvFrom} to={csvTo} setTo={setCsvTo} sort={csvSort} setSort={setCsvSort} onExport={exportCSV} push={push} />}
+          {view === "csv" && <CsvView entries={active} archivedCount={counts.archiv} filtered={csvFiltered} active={csvActive} setActive={setCsvActive} search={csvSearch} setSearch={setCsvSearch} from={csvFrom} setFrom={setCsvFrom} to={csvTo} setTo={setCsvTo} sort={csvSort} setSort={setCsvSort} onExport={exportCSV} push={push} />}
           {view === "settings" && <SettingsView settings={settings} setSettings={(s) => { setSettings(s); saveSettings(s); }} ytConns={ytConns} setYtConns={(c) => { setYtConns(c); saveYT(c); }}
             drive={drive} setDrive={(d) => { setDrive(d); saveDrive(d); }} entries={entries} setEntries={(e) => persist(e, "Daten importiert")} push={push}
             driveMsg={driveMsg} setDriveMsg={setDriveMsg} bridgeToken={bridgeToken} onChangePassword={changeOwnPassword} username={user} onPoolChanged={() => setPool(checkerPool())} />}

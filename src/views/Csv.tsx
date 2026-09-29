@@ -3,7 +3,7 @@ import { CSV_FILTER_DEFS, CSV_HEAD, CSV_SORTS, PovEntry, csvRow, toTSV } from ".
 import { Badge, btnGhost, btnPrimary, copyText, inputCls, mini } from "../ui";
 
 export default function CsvView(p: {
-  entries: PovEntry[]; filtered: PovEntry[];
+  entries: PovEntry[]; archivedCount: number; filtered: PovEntry[];
   active: Set<string>; setActive: (s: Set<string>) => void;
   search: string; setSearch: (s: string) => void; from: string; setFrom: (s: string) => void;
   to: string; setTo: (s: string) => void; sort: string; setSort: (s: string) => void;
@@ -14,6 +14,11 @@ export default function CsvView(p: {
     <div className="space-y-4">
       <div className="rounded-2xl border border-white/10 bg-[#101830] p-4">
         <p className="text-xs text-slate-400">SOC wird mit dem SC aus dem Adminpanel gefüllt. RID bleibt immer leer. Familie bleibt leer. Admin 1–5 werden aus den PC Checkern übernommen. Filter verändern nur Anzeige/Export — nie die Originaldaten.</p>
+        {p.archivedCount > 0 && (
+          <p className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+            <b>{p.archivedCount}</b> bereits im POV-Archiv eingetragene POV{p.archivedCount === 1 ? "" : "s"} {p.archivedCount === 1 ? "wird" : "werden"} hier nicht angezeigt — es {p.archivedCount === 1 ? "erscheint" : "erscheinen"} nur, was noch einzutragen ist.
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap gap-1.5">
           {CSV_FILTER_DEFS.map((f) => (
             <button key={f.id} onClick={() => toggle(f.id)}
@@ -32,7 +37,7 @@ export default function CsvView(p: {
           </select>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Badge tone="sky">{p.filtered.length} von {p.entries.length} Einträgen</Badge>
+          <Badge tone="sky">{p.filtered.length} von {p.entries.length} noch einzutragen</Badge>
           <button className={btnPrimary} onClick={p.onExport}><Download size={15} /> CSV Download (nur gefilterte)</button>
           <button className={btnGhost} onClick={() => { copyText(toTSV(p.filtered)); p.push("ok", `${p.filtered.length} Zeilen als Tabelle kopiert (Tab-getrennt, für Google Sheets/Excel).`); }}><Copy size={15} /> Als Tabelle kopieren</button>
         </div>
@@ -63,7 +68,7 @@ export default function CsvView(p: {
           </tbody>
         </table>
         {p.filtered.length > 300 && <p className="border-t border-white/5 bg-[#0d1528] px-3 py-2 text-[11px] text-slate-400">Vorschau: 300 von {p.filtered.length} — Export enthält alle gefilterten.</p>}
-        {p.filtered.length === 0 && <p className="bg-[#0d1528] px-3 py-8 text-center text-slate-400">Keine Einträge für diese Filter.</p>}
+        {p.filtered.length === 0 && <p className="bg-[#0d1528] px-3 py-8 text-center text-slate-400">{p.entries.length === 0 && p.archivedCount > 0 ? "Alles eingetragen — alle POVs liegen bereits im POV-Archiv." : "Keine Einträge für diese Filter."}</p>}
       </div>
     </div>
   );
